@@ -1,6 +1,6 @@
 # dsh-session-rules · 会话守则
 
-给**单个会话**设置守则的 DeepSeek Harness 插件：在对话框顶部的「会话守则」按钮里写下这一轮对话的注意事项、约束或编码规范，保存后从**下一轮**开始进入该会话的系统提示词。其他会话不受影响，也不会修改任何项目文件或 Harness 文件。
+给**单个会话**设置守则的 DeepSeek Harness 插件：在会话行 `⋯` 菜单的「会话守则」里写下这一轮对话的注意事项、约束或编码规范，保存后从**下一轮**开始进入该会话的系统提示词。其他会话不受影响，也不会修改任何项目文件或 Harness 文件。
 
 典型用途：
 
@@ -15,13 +15,13 @@
 dsh plugin --profile desktop add /path/to/dsh-session-rules
 ```
 
-装好后重启 DeepSeek Harness。重启后打开任意会话，输入框上方工具栏会出现「会话守则」按钮；侧栏会话列表里每个会话的 `⋯` 菜单中也有同一项「会话守则」。
+装好后重启 DeepSeek Harness。重启后打开侧栏会话列表，每个会话右侧的 `⋯` 菜单里有「会话守则」一项。
 
 （GitHub 发布后也可直接 `dsh plugin --profile desktop add dsh-session-rules`。）
 
 ## 使用
 
-1. 点「会话守则」。
+1. 在会话行 `⋯` 菜单里点「会话守则」。
 2. 直接写，或点「导入项目规范」勾选要复制的文件。
 3. 「保存」→ 下一轮对话生效；清空内容再保存 = 取消注入。
 
@@ -44,7 +44,7 @@ npm test                        # 构建 + 自检：会话 id 归一化、存储
 ```
 
 - `src/index.ts`：宿主端。注册 `systemPrompt` 段落（每次组装提示词时按当前会话 id 取守则）和一个 `webServer` 精确路由。
-- `src/client.ts`：浏览器端。tsc 直接产出的 classic script（`__ModuleLoader__` 工厂），不经过打包器；会话头部按钮、侧栏会话行 `⋯` 菜单项 + 共用的弹窗编辑器。
+- `src/client.ts`：浏览器端。tsc 直接产出的 classic script（`__ModuleLoader__` 工厂），不经过打包器；侧栏会话行 `⋯` 菜单项 + 弹窗编辑器。
 - `tsconfig.json`：与 `dsh-app-packager` 插件同构（ES2022 / nodenext / declaration）。
 - `cordis.patch.yml`：安装为 bundle 时插入的插件行。
 

@@ -1,7 +1,7 @@
 // dsh-session-rules — client half (browser module-loader bundle).
 //
-// A button in the conversation header opens a dialog where the user edits the
-// rules/notes for THIS conversation. Saved text is injected by the host half
+// An entry in the sidebar session row's "..." menu opens a dialog where the
+// user edits the rules/notes for THAT conversation. Saved text is injected by the host half
 // into that session's system prompt (see src/index.ts).
 //
 // Bundle protocol: classic script registering a lazy factory.
@@ -16,17 +16,14 @@
     const Modal = primitives.Modal
     const h = React.createElement
 
-    const HEADER_SLOT = 'conversation.session.header.actions'
     const MENU_SLOT = 'sidebar.workspaces.session.menu.item'
     const OVERLAY_SLOT = 'shell.overlay'
-    const HEADER_ID = 'session-rules.header'
     const MENU_ID = 'session-rules.menu'
     const DIALOG_ID = 'session-rules.dialog'
     const ENDPOINT = '/__chameleon/session/rules'
     const NS = 'session-rules'
 
     const ZH = {
-      'button.title': '会话守则',
       'menu.title': '会话守则',
       'dialog.title': '会话守则',
       'dialog.hint': '这里写的内容会加入本会话的系统提示词，每轮对话生效；不影响其他会话，也不改动项目文件。',
@@ -44,7 +41,6 @@
       'dialog.empty': '（尚未设置，留空即不注入）',
     }
     const EN = {
-      'button.title': 'Rules',
       'menu.title': 'Session rules',
       'dialog.title': 'Session rules',
       'dialog.hint': 'Text here is added to this conversation’s system prompt on every turn. Other sessions and project files are untouched.',
@@ -114,22 +110,6 @@
       const [value, setValue] = React.useState(request)
       React.useEffect(() => subscribe(() => setValue(request)), [])
       return value
-    }
-
-    // --- header button ------------------------------------------------------
-    function HeaderButton(props) {
-      const text = resolveText(seatOf(props), 'button.title')
-      return h(
-        Button,
-        {
-          variant: 'ghost',
-          size: 'sm',
-          'aria-label': text,
-          title: text,
-          onClick: () => setRequest({ sessionId: props.sessionId, seat: seatOf(props) }),
-        },
-        text,
-      )
     }
 
     // --- sidebar session-row menu item ---------------------------------------
@@ -354,9 +334,6 @@
       name: NS,
       inject: ['slots'],
       apply(ctx) {
-        ctx.slots.inject(HEADER_SLOT, () =>
-          ctx.slots.register({ name: HEADER_SLOT, id: HEADER_ID, order: 30, locale: NS }, HeaderButton),
-        )
         // `sessionId` is a standard prop for every row entry; only the row
         // owner's `useMenuOpenState` has to be contributed here.
         ctx.slots.inject(MENU_SLOT, () =>
