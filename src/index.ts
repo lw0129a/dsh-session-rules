@@ -11,6 +11,7 @@
 // into the store as text, and the source file is only ever read.
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import path from 'node:path'
 
@@ -208,12 +209,9 @@ function projectFiles(sessionId) {
 
 // --- rule polishing -------------------------------------------------------
 // Optional: rewrite the user's notes as tighter, executable rules. Runs on the
-// local Ollama server so the plugin needs no API key and no network egress.
-// Point DSH_SESSION_RULES_OLLAMA at another endpoint (or a different model) to
-// tune it; when the server is down the dialog just reports it and the user
-// keeps editing by hand.
-const OLLAMA_URL = process.env.DSH_SESSION_RULES_OLLAMA ?? 'http://127.0.0.1:11434'
-const OLLAMA_MODEL = process.env.DSH_SESSION_RULES_MODEL ?? 'qwen3:8b'
+// harness LLM service, i.e. the provider/model the app itself is configured
+// with — no second API key, no external endpoint. When the service is missing
+// or the model fails, the dialog reports it and the user keeps editing by hand.
 const OPTIMIZE_SYSTEM = [
   '你把用户随手写的「会话守则」整理成给编码助手看的规范。',
   '要求：保留原意和全部约束，不新增事实、不删减要求；合并重复项；',
@@ -221,26 +219,50 @@ const OPTIMIZE_SYSTEM = [
   '输出格式固定：每一行都是一条以「- 」开头的条目，不要小标题、不要编号、不要空行分组、不要解释、不要代码块围栏。',
 ].join('')
 
-async function optimizeRules(text) {
-  const response = await fetch(`${OLLAMA_URL}/api/chat`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      model: OLLAMA_MODEL,
-      stream: false,
-      options: { temperature: 0.2 },
-      messages: [
-        { role: 'system', content: OPTIMIZE_SYSTEM },
-        { role: 'user', content: text },
-      ],
-    }),
+// The lowest reasoning effort the model advertises: a few rules need no deep
+// thinking, and a high default can spend the whole output budget on reasoning
+// and return no text at all.
+async function lowestReasoningEffort(llm, provider, model) {
+  if (typeof llm.resolveModelInfo !== 'function') return undefined
+  try {
+    const info = await llm.resolveModelInfo(provider, model)
+    const efforts = info?.reasoning?.efforts
+    if (Array.isArray(efforts) && efforts.length > 0 && typeof efforts[0]?.id === 'string') return efforts[0].id
+  } catch {}
+  return undefined
+}
+
+async function optimizeRules(ctx, text) {
+  const llm = ctx.get('llm')
+  if (!llm || typeof llm.stream !== 'function') throw new Error('llm service unavailable')
+  const selection = ctx.get('agentDefaultModel')?.currentSelection?.()
+  if (!selection || typeof selection.provider !== 'string' || typeof selection.model !== 'string') {
+    throw new Error('no model selection')
+  }
+  const effort = await lowestReasoningEffort(llm, selection.provider, selection.model)
+  let out = ''
+  const stream = llm.stream({
+    provider: selection.provider,
+    model: selection.model,
+    messages: [
+      {
+        id: randomUUID(),
+        role: 'user',
+        content: [{ type: 'text', text }],
+        source: { kind: 'plugin:dsh-session-rules' },
+      },
+    ],
+    system: OPTIMIZE_SYSTEM,
+    maxTokens: 1200,
     signal: AbortSignal.timeout(120000),
+    ...(effort === undefined ? {} : { reasoningEffort: effort }),
   })
-  if (!response.ok) throw new Error(`ollama HTTP ${response.status}`)
-  const body: any = await response.json()
-  const out = typeof body?.message?.content === 'string' ? body.message.content.trim() : ''
+  for await (const chunk of stream) {
+    if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') out += chunk.text
+  }
+  out = out.trim().replace(/^```[a-z]*\n?/i, '').replace(/```$/, '').trim()
   if (out === '') throw new Error('empty completion')
-  return out.replace(/^```[a-z]*\n?/i, '').replace(/```$/, '').trim()
+  return out
 }
 
 // --- HTTP handler ----------------------------------------------------------
@@ -298,10 +320,10 @@ async function handleRequest(ctx, req, res) {
       return
     }
     try {
-      sendJson(res, 200, { ok: true, rules: await optimizeRules(text) })
+      sendJson(res, 200, { ok: true, rules: await optimizeRules(ctx, text) })
     } catch (error) {
       warn(ctx, `optimize failed: ${String(error?.message ?? error)}`)
-      sendJson(res, 502, { ok: false, error: 'local model unavailable' })
+      sendJson(res, 502, { ok: false, error: 'model unavailable' })
     }
     return
   }
