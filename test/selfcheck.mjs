@@ -16,8 +16,8 @@ assert.deepEqual(idCandidates('session-abc'), ['session-abc', 'abc'])
 assert.deepEqual(idCandidates('abc'), ['abc', 'session-abc'])
 
 // Missing / malformed store entries degrade to empty rules.
-assert.deepEqual(entryOf({}, 'abc'), { rules: '', sources: [] })
-assert.deepEqual(entryOf({ abc: { rules: 42, sources: 'x' } }, 'abc'), { rules: '', sources: [] })
+assert.deepEqual(entryOf({}, 'abc'), { rules: '', sources: [], enabled: true })
+assert.deepEqual(entryOf({ abc: { rules: 42, sources: 'x' } }, 'abc'), { rules: '', sources: [], enabled: true })
 assert.equal(rulesFor('abc'), '')
 
 const storeDir = path.join(home, 'plugin-data', 'dsh-session-rules')
@@ -34,6 +34,15 @@ assert.equal(rulesFor('session-other'), '')
 
 // Unsafe ids never touch the store.
 assert.equal(rulesFor('../etc/passwd'), '')
+
+// The per-session switch: a disabled entry injects nothing even with rules saved.
+writeFileSync(
+  path.join(storeDir, 'rules.json'),
+  JSON.stringify({ abc: { rules: '先跑测试', sources: [], enabled: false } }),
+)
+assert.equal(rulesFor('abc'), '')
+assert.equal(rulesFor('session-abc'), '')
+assert.equal(entryOf(JSON.parse(JSON.stringify({ abc: { rules: 'x' } })), 'abc').enabled, true)
 
 // No sessions directory => nothing to import, and no throw.
 assert.deepEqual(projectFiles('session-abc'), [])

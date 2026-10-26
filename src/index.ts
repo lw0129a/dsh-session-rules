@@ -61,10 +61,12 @@ function writeStore(store) {
 
 function entryOf(store, sessionId) {
   const entry = store[sessionId]
-  if (entry === null || typeof entry !== 'object') return { rules: '', sources: [] }
+  if (entry === null || typeof entry !== 'object') return { rules: '', sources: [], enabled: true }
   return {
     rules: typeof entry.rules === 'string' ? entry.rules : '',
     sources: Array.isArray(entry.sources) ? entry.sources.filter((item) => typeof item === 'string') : [],
+    // Absent means enabled: entries written before the switch existed keep working.
+    enabled: entry.enabled !== false,
   }
 }
 
@@ -86,8 +88,8 @@ function rulesFor(sessionId) {
   try {
     const store = readStore()
     for (const key of idCandidates(sessionId)) {
-      const { rules } = entryOf(store, key)
-      if (rules.trim() !== '') return rules
+      const { rules, enabled } = entryOf(store, key)
+      if (enabled && rules.trim() !== '') return rules
     }
     return ''
   } catch {
@@ -229,7 +231,7 @@ async function handleRequest(ctx, req, res) {
     }
     const store = readStore()
     const entry = entryOf(store, keyFor(store, sessionId))
-    const body: any = { ok: true, sessionId, rules: entry.rules, sources: entry.sources }
+    const body: any = { ok: true, sessionId, rules: entry.rules, sources: entry.sources, enabled: entry.enabled }
     if (url.searchParams.get('candidates') === '1') body.files = projectFiles(sessionId)
     sendJson(res, 200, body)
     return
@@ -258,11 +260,12 @@ async function handleRequest(ctx, req, res) {
     sendJson(res, 413, { ok: false, error: 'rules too long' })
     return
   }
+  const enabled = payload?.enabled !== false
   const rawSources = Array.isArray(payload?.sources) ? payload.sources : []
   const sources = rawSources.filter((item) => typeof item === 'string' && item.length <= 500).slice(0, 100)
 
   const store = readStore()
-  store[keyFor(store, sessionId)] = { rules, sources, updatedAt: new Date().toISOString() }
+  store[keyFor(store, sessionId)] = { rules, sources, enabled, updatedAt: new Date().toISOString() }
   try {
     writeStore(store)
   } catch (error) {
@@ -270,7 +273,7 @@ async function handleRequest(ctx, req, res) {
     sendJson(res, 500, { ok: false, error: 'could not save rules' })
     return
   }
-  sendJson(res, 200, { ok: true, sessionId, rules, sources })
+  sendJson(res, 200, { ok: true, sessionId, rules, sources, enabled })
 }
 
 // --- plugin entry ----------------------------------------------------------

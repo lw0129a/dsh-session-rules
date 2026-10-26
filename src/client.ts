@@ -39,6 +39,8 @@
       'dialog.loadFailed': '读取失败',
       'dialog.saveFailed': '保存失败',
       'dialog.empty': '（尚未设置，留空即不注入）',
+      'dialog.enabled': '对本会话生效',
+      'dialog.disabledHint': '已关闭：守则内容保留，但不会加入本会话的系统提示词。',
     }
     const EN = {
       'menu.title': 'Session rules',
@@ -56,6 +58,8 @@
       'dialog.loadFailed': 'Could not load',
       'dialog.saveFailed': 'Could not save',
       'dialog.empty': '(empty — nothing is injected)',
+      'dialog.enabled': 'Apply to this session',
+      'dialog.disabledHint': 'Off — the rules are kept but not added to this session’s system prompt.',
     }
 
     function seatOf(props) {
@@ -175,6 +179,7 @@
       const t = (key) => resolveText(seat, key)
       const [rules, setRules] = React.useState('')
       const [sources, setSources] = React.useState([])
+      const [enabled, setEnabled] = React.useState(true)
       const [loading, setLoading] = React.useState(true)
       const [busy, setBusy] = React.useState(false)
       const [error, setError] = React.useState(null)
@@ -191,6 +196,7 @@
             if (!body || body.ok !== true) throw new Error(body?.error ?? 'invalid response')
             setRules(typeof body.rules === 'string' ? body.rules : '')
             setSources(Array.isArray(body.sources) ? body.sources : [])
+            setEnabled(body.enabled !== false)
           })
           .catch((cause) => {
             if (!cancelled) setError(`${t('dialog.loadFailed')}: ${String(cause?.message ?? cause)}`)
@@ -212,7 +218,7 @@
             method: 'POST',
             credentials: 'same-origin',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ sessionId, rules, sources }),
+            body: JSON.stringify({ sessionId, rules, sources, enabled }),
           })
           const body = await res.json()
           if (!body || body.ok !== true) throw new Error(body?.error ?? `HTTP ${res.status}`)
@@ -266,6 +272,29 @@
       }
 
       const children = [
+        h(
+          'label',
+          {
+            key: 'toggle',
+            style: {
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              margin: '0 0 10px',
+              fontSize: 13,
+              color: 'var(--dsw-alias-text-primary, #1f2328)',
+              cursor: 'pointer',
+              userSelect: 'none',
+            },
+          },
+          h('input', {
+            type: 'checkbox',
+            checked: enabled,
+            onChange: (event) => setEnabled(event.target.checked),
+            style: { width: 14, height: 14, accentColor: 'var(--dsw-alias-brand-primary, #0969da)', cursor: 'pointer' },
+          }),
+          h('span', null, t('dialog.enabled')),
+        ),
         h('p', { key: 'hint', style: { ...bodyStyle, margin: '0 0 8px' } }, t('dialog.hint')),
         h('textarea', {
           key: 'editor',
@@ -282,6 +311,7 @@
           h('p', { key: 'sources', style: { ...bodyStyle, margin: '8px 0 0' } }, `${t('dialog.sources')}${sources.join('、')}`),
         )
       }
+      if (!enabled) children.push(h('p', { key: 'off', style: { ...bodyStyle, margin: '8px 0 0' } }, t('dialog.disabledHint')))
       if (error !== null) children.push(h('p', { key: 'error', style: { ...errorStyle, margin: '8px 0 0' } }, error))
       else if (note !== null) children.push(h('p', { key: 'note', style: { ...goodStyle, margin: '8px 0 0' } }, note))
 
