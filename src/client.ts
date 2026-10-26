@@ -112,6 +112,29 @@
       return value
     }
 
+    // --- icon ---------------------------------------------------------------
+    // Shield + check: the same glyph at every size, drawn inline so the menu
+    // entry does not depend on which icon set a given shell build ships.
+    function RulesIcon(props: any) {
+      const size = props?.size ?? 14
+      return h(
+        'svg',
+        {
+          width: size,
+          height: size,
+          viewBox: '0 0 16 16',
+          fill: 'none',
+          stroke: 'currentColor',
+          strokeWidth: 1.5,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+          'aria-hidden': 'true',
+        },
+        h('path', { d: 'M8 1.6 13 3.5v4.1c0 3.1-2.1 5.6-5 6.8-2.9-1.2-5-3.7-5-6.8V3.5z' }),
+        h('path', { d: 'm5.7 7.9 1.7 1.7 3-3.3' }),
+      )
+    }
+
     // --- sidebar session-row menu item ---------------------------------------
     // Same dialog as the header button: the row menu is the place users look
     // for per-session actions, and the header can be crowded.
@@ -124,7 +147,7 @@
         if (closeMenu !== null) closeMenu(false)
         setRequest({ sessionId: props.sessionId, seat: seatOf(props) })
       }
-      return h(MenuItemButton, { onSelect: select }, text)
+      return h(MenuItemButton, { icon: h(RulesIcon, { size: 14 }), onSelect: select }, text)
     }
 
     // --- dialog -------------------------------------------------------------
