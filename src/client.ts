@@ -27,7 +27,7 @@
       'menu.title': '会话守则',
       'dialog.title': '会话守则',
       'dialog.hint': '这里写的内容会加入本会话的系统提示词，每轮对话生效；不影响其他会话，也不改动项目文件。',
-      'dialog.placeholder': '直接写，每行会自动变成一条「- 」开头的要求，例如：\n修改前先跑测试\n只改和相关功能有关的文件\n中文回复，少用列表',
+      'dialog.placeholder': '例如：\n- 修改前先跑测试\n- 只改和相关功能有关的文件\n- 中文回复，少用列表',
       'dialog.import': '导入项目规范',
       'dialog.optimize': '优化描述',
       'dialog.optimizing': '优化中…',
@@ -60,7 +60,7 @@
       'menu.title': 'Session rules',
       'dialog.title': 'Session rules',
       'dialog.hint': 'Text here is added to this conversation’s system prompt on every turn. Other sessions and project files are untouched.',
-      'dialog.placeholder': 'Just type — each line becomes a “- ” bullet, e.g.\nRun the tests before changing code\nTouch only files related to the task\nReply in Chinese',
+      'dialog.placeholder': 'e.g.\n- Run the tests before changing code\n- Touch only files related to the task\n- Reply in Chinese',
       'dialog.import': 'Import project guidelines',
       'dialog.optimize': 'Polish',
       'dialog.optimizing': 'Polishing…',
@@ -426,7 +426,6 @@
           }),
           h('span', null, t('dialog.enabled')),
         ),
-        h('p', { key: 'hint', style: { ...bodyStyle, margin: '0 0 8px' } }, t('dialog.hint')),
         h('textarea', {
           key: 'editor',
           value: rules,
@@ -521,7 +520,7 @@
                 ? null
                 : h(
                     'div',
-                    { key: 'importRow', style: { marginTop: 8 } },
+                    { key: 'importRow', style: { marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' } },
                     h(Button, { variant: 'outline', size: 'sm', onClick: loadCandidates, disabled: busy || loading }, t('dialog.import')),
                     h(Button, { variant: 'outline', size: 'sm', onClick: optimize, disabled: busy || loading }, busy ? t('dialog.optimizing') : t('dialog.optimize')),
                   ),
