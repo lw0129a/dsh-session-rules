@@ -70,12 +70,16 @@ window.__ModuleLoader__.load({
           // Fall through to the built-in dictionaries.
         }
       }
-      let lang = 'en'
+      // The desktop UI ships Chinese by default; English only when the page or
+      // the browser explicitly says so.
+      let lang = 'zh'
       try {
-        const raw = typeof navigator !== 'undefined' ? String(navigator.language || '') : ''
-        if (raw.toLowerCase().startsWith('zh')) lang = 'zh'
+        const docLang = typeof document !== 'undefined' ? String(document.documentElement?.lang || '') : ''
+        const browserLang = typeof navigator !== 'undefined' ? String(navigator.language || '') : ''
+        const raw = docLang !== '' ? docLang : browserLang
+        if (raw.toLowerCase().startsWith('en')) lang = 'en'
       } catch {
-        // Keep English.
+        // Keep Chinese.
       }
       const dict = lang === 'zh' ? ZH : EN
       return dict[key] ?? key
@@ -291,7 +295,7 @@ window.__ModuleLoader__.load({
           t('dialog.importPicked'),
         ),
         h(Button, { key: 'cancel', variant: 'outline', size: 'sm', onClick: props.onClose }, t('dialog.cancel')),
-        h(Button, { key: 'save', variant: 'primary', size: 'sm', onClick: save, disabled: busy || loading }, t('dialog.save')),
+        h(Button, { key: 'save', variant: 'outline', size: 'sm', onClick: save, disabled: busy || loading }, t('dialog.save')),
       ]
 
       return h(
