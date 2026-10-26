@@ -27,7 +27,7 @@
       'menu.title': '会话守则',
       'dialog.title': '会话守则',
       'dialog.hint': '这里写的内容会加入本会话的系统提示词，每轮对话生效；不影响其他会话，也不改动项目文件。',
-      'dialog.placeholder': '例如：\n- 修改前先跑测试\n- 只改和相关功能有关的文件\n- 中文回复，少用列表',
+      'dialog.placeholder': '直接写，每行会自动变成一条「- 」开头的要求，例如：\n修改前先跑测试\n只改和相关功能有关的文件\n中文回复，少用列表',
       'dialog.import': '导入项目规范',
       'dialog.optimize': '优化描述',
       'dialog.optimizing': '优化中…',
@@ -51,7 +51,7 @@
       'menu.title': 'Session rules',
       'dialog.title': 'Session rules',
       'dialog.hint': 'Text here is added to this conversation’s system prompt on every turn. Other sessions and project files are untouched.',
-      'dialog.placeholder': 'e.g.\n- Run the tests before changing code\n- Touch only files related to the task\n- Reply in Chinese',
+      'dialog.placeholder': 'Just type — each line becomes a “- ” bullet, e.g.\nRun the tests before changing code\nTouch only files related to the task\nReply in Chinese',
       'dialog.import': 'Import project guidelines',
       'dialog.optimize': 'Polish',
       'dialog.optimizing': 'Polishing…',
@@ -183,6 +183,35 @@
       resize: 'vertical',
     }
 
+    // Every non-empty line is a rule bullet: "- " is added as you type and
+    // cannot be deleted (deleting it just re-adds it). Lines you leave blank
+    // stay blank so the text can be grouped.
+    const BULLET = '- '
+    function normalizeBullets(text) {
+      const lines = text.split('\n').map((line) => {
+        const bare = line.replace(/^[\s-]*/, '').replace(/\s+$/, '')
+        return bare === '' ? '' : `${BULLET}${bare}`
+      })
+      return lines.join('\n')
+    }
+
+    function withBulletCaret(target) {
+      const raw = target.value
+      const caret = target.selectionStart ?? raw.length
+      const beforeLines = raw.slice(0, caret).split('\n')
+      const lineIndex = beforeLines.length - 1
+      const oldLine = beforeLines[lineIndex]
+      const next = normalizeBullets(raw)
+      const newLine = next.split('\n')[lineIndex] ?? ''
+      const shift = newLine.length - oldLine.length
+      const position = Math.max(0, Math.min(next.length, caret + shift))
+      if (next !== raw) {
+        target.value = next
+        target.setSelectionRange(position, position)
+      }
+      return next
+    }
+
     function EditorDialog(props) {
       const seat = props.seat
       const sessionId = props.sessionId
@@ -236,7 +265,7 @@
           })
           const body = await res.json()
           if (!body || body.ok !== true) throw new Error(t('dialog.optimizeFailed'))
-          setRules(String(body.rules))
+          setRules(normalizeBullets(String(body.rules)))
           setNote(t('dialog.optimized'))
         } catch (cause) {
           setError(`${t('dialog.optimizeFailed')} ${String(cause?.message ?? cause)}`)
@@ -338,7 +367,7 @@
           placeholder: t('dialog.placeholder'),
           spellCheck: false,
           rows: 12,
-          onChange: (event) => setRules(event.target.value),
+          onChange: (event) => setRules(withBulletCaret(event.target)),
           style: textareaStyle,
         }),
       ]
