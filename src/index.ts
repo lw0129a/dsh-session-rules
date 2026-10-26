@@ -206,6 +206,43 @@ function projectFiles(sessionId) {
   return files
 }
 
+// --- rule polishing -------------------------------------------------------
+// Optional: rewrite the user's notes as tighter, executable rules. Runs on the
+// local Ollama server so the plugin needs no API key and no network egress.
+// Point DSH_SESSION_RULES_OLLAMA at another endpoint (or a different model) to
+// tune it; when the server is down the dialog just reports it and the user
+// keeps editing by hand.
+const OLLAMA_URL = process.env.DSH_SESSION_RULES_OLLAMA ?? 'http://127.0.0.1:11434'
+const OLLAMA_MODEL = process.env.DSH_SESSION_RULES_MODEL ?? 'qwen3:8b'
+const OPTIMIZE_SYSTEM = [
+  '你把用户随手写的「会话守则」整理成给编码助手看的规范。',
+  '要求：保留原意和全部约束，不新增事实、不删减要求；合并重复项；',
+  '每条一句，动词开头，可执行；按主题分组时最多两级；中文输出。',
+  '只输出整理后的守则正文，不要解释、不要代码块围栏。',
+].join('')
+
+async function optimizeRules(text) {
+  const response = await fetch(`${OLLAMA_URL}/api/chat`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model: OLLAMA_MODEL,
+      stream: false,
+      options: { temperature: 0.2 },
+      messages: [
+        { role: 'system', content: OPTIMIZE_SYSTEM },
+        { role: 'user', content: text },
+      ],
+    }),
+    signal: AbortSignal.timeout(120000),
+  })
+  if (!response.ok) throw new Error(`ollama HTTP ${response.status}`)
+  const body: any = await response.json()
+  const out = typeof body?.message?.content === 'string' ? body.message.content.trim() : ''
+  if (out === '') throw new Error('empty completion')
+  return out.replace(/^```[a-z]*\n?/i, '').replace(/```$/, '').trim()
+}
+
 // --- HTTP handler ----------------------------------------------------------
 
 async function handleRequest(ctx, req, res) {
@@ -247,6 +284,25 @@ async function handleRequest(ctx, req, res) {
     payload = JSON.parse(await readBody(req))
   } catch {
     sendJson(res, 400, { ok: false, error: 'bad json body' })
+    return
+  }
+
+  if (payload?.action === 'optimize') {
+    const text = typeof payload?.rules === 'string' ? payload.rules : ''
+    if (text.trim() === '') {
+      sendJson(res, 400, { ok: false, error: 'nothing to optimize' })
+      return
+    }
+    if (text.length > 20000) {
+      sendJson(res, 413, { ok: false, error: 'rules too long to optimize' })
+      return
+    }
+    try {
+      sendJson(res, 200, { ok: true, rules: await optimizeRules(text) })
+    } catch (error) {
+      warn(ctx, `optimize failed: ${String(error?.message ?? error)}`)
+      sendJson(res, 502, { ok: false, error: 'local model unavailable' })
+    }
     return
   }
 
@@ -312,4 +368,4 @@ export function apply(ctx) {
 
 // Exposed for the self-check: the store helpers and the handler are plain
 // functions that take their dependencies explicitly.
-export const __test = { handleRequest, rulesFor, entryOf, idCandidates, projectFiles, workspaceOf }
+export const __test = { handleRequest, rulesFor, entryOf, idCandidates, projectFiles, workspaceOf, optimizeRules }

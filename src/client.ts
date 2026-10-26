@@ -29,6 +29,11 @@
       'dialog.hint': '这里写的内容会加入本会话的系统提示词，每轮对话生效；不影响其他会话，也不改动项目文件。',
       'dialog.placeholder': '例如：\n- 修改前先跑测试\n- 只改和相关功能有关的文件\n- 中文回复，少用列表',
       'dialog.import': '导入项目规范',
+      'dialog.optimize': '优化描述',
+      'dialog.optimizing': '优化中…',
+      'dialog.optimizeFailed': '优化失败（本地模型未运行？）',
+      'dialog.optimized': '已优化，确认后点保存。',
+      'dialog.nothingToOptimize': '先写点内容再优化。',
       'dialog.pickHint': '选择要导入的项目规范文件（只读，不会修改原文件）：',
       'dialog.nothingFound': '没有找到项目规范文件（AGENTS.md / CLAUDE.md / .cursorrules 等）。',
       'dialog.importPicked': '导入选中',
@@ -48,6 +53,11 @@
       'dialog.hint': 'Text here is added to this conversation’s system prompt on every turn. Other sessions and project files are untouched.',
       'dialog.placeholder': 'e.g.\n- Run the tests before changing code\n- Touch only files related to the task\n- Reply in Chinese',
       'dialog.import': 'Import project guidelines',
+      'dialog.optimize': 'Polish',
+      'dialog.optimizing': 'Polishing…',
+      'dialog.optimizeFailed': 'Polish failed (is the local model running?)',
+      'dialog.optimized': 'Polished — review it, then save.',
+      'dialog.nothingToOptimize': 'Write something first.',
       'dialog.pickHint': 'Pick project guideline files to copy in (read-only, the originals are not modified):',
       'dialog.nothingFound': 'No project guideline file found (AGENTS.md / CLAUDE.md / .cursorrules …).',
       'dialog.importPicked': 'Import selected',
@@ -208,6 +218,32 @@
           cancelled = true
         }
       }, [sessionId])
+
+      async function optimize() {
+        if (rules.trim() === '') {
+          setNote(t('dialog.nothingToOptimize'))
+          return
+        }
+        setBusy(true)
+        setError(null)
+        setNote(null)
+        try {
+          const res = await fetch(ENDPOINT, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ action: 'optimize', rules }),
+          })
+          const body = await res.json()
+          if (!body || body.ok !== true) throw new Error(t('dialog.optimizeFailed'))
+          setRules(String(body.rules))
+          setNote(t('dialog.optimized'))
+        } catch (cause) {
+          setError(`${t('dialog.optimizeFailed')} ${String(cause?.message ?? cause)}`)
+        } finally {
+          setBusy(false)
+        }
+      }
 
       async function save() {
         setBusy(true)
@@ -372,6 +408,7 @@
                     'div',
                     { key: 'importRow', style: { marginTop: 8 } },
                     h(Button, { variant: 'outline', size: 'sm', onClick: loadCandidates, disabled: busy || loading }, t('dialog.import')),
+                    h(Button, { variant: 'outline', size: 'sm', onClick: optimize, disabled: busy || loading }, busy ? t('dialog.optimizing') : t('dialog.optimize')),
                   ),
             ].filter((item) => item !== null),
       )
