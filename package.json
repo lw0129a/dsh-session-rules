@@ -4,36 +4,32 @@
   "description": "Per-session rules and notes for DeepSeek Harness: edit this conversation's constraints and coding conventions in a popup, import existing project guidelines read-only, and save rules extracted from the conversation. The saved text is injected into that session's system prompt on the next model call.",
   "type": "module",
   "license": "MIT",
-  "keywords": [
-    "dsh-plugin",
-    "deepseek-harness",
-    "prompt"
-  ],
-  "files": [
-    "src/",
-    "cordis.patch.yml",
-    "icon.svg",
-    "README.md"
-  ],
-  "engines": {
-    "node": ">=20"
-  },
-  "main": "src/index.js",
+  "keywords": ["dsh-plugin", "deepseek-harness", "prompt"],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.js",
-    "./client": "./src/client.js",
+    ".": "./dist/index.js",
+    "./client": "./dist/client.js",
     "./package.json": "./package.json"
   },
+  "files": ["dist", "cordis.patch.yml", "icon.svg", "README.md"],
+  "engines": { "node": ">=20" },
   "dsh": {
-    "bundle": {
-      "patch": "./cordis.patch.yml"
-    },
+    "manifestVersion": 1,
+    "bundle": { "patch": "./cordis.patch.yml" },
     "client": {
-      "platform": "web"
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-locale"]
     }
   },
   "scripts": {
-    "test": "node test/selfcheck.mjs"
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build",
+    "test": "npm run build && node test/selfcheck.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
   },
   "meta": {
     "title": "Session Rules",

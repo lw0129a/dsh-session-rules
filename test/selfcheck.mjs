@@ -7,7 +7,7 @@ import path from 'node:path'
 const home = mkdtempSync(path.join(tmpdir(), 'dsh-session-rules-'))
 process.env.DSH_HOME = home
 
-const { __test } = await import('../src/index.js')
+const { __test } = await import('../dist/index.js')
 const { rulesFor, entryOf, idCandidates, projectFiles } = __test
 
 // Session ids reach us as `session-<uuid>` in the client and at prompt

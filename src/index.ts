@@ -114,8 +114,8 @@ function sendJson(res, status, body) {
   res.end(JSON.stringify(body))
 }
 
-function readBody(req) {
-  return new Promise((resolve, reject) => {
+function readBody(req): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
     const chunks = []
     let size = 0
     req.on('data', (chunk) => {
@@ -229,7 +229,7 @@ async function handleRequest(ctx, req, res) {
     }
     const store = readStore()
     const entry = entryOf(store, keyFor(store, sessionId))
-    const body = { ok: true, sessionId, rules: entry.rules, sources: entry.sources }
+    const body: any = { ok: true, sessionId, rules: entry.rules, sources: entry.sources }
     if (url.searchParams.get('candidates') === '1') body.files = projectFiles(sessionId)
     sendJson(res, 200, body)
     return

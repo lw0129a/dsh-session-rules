@@ -36,13 +36,19 @@ dsh plugin --profile desktop add /path/to/dsh-session-rules
 
 ## 开发
 
+TypeScript 源码在 `src/`，`tsc` 编译到 `dist/`。npm、pnpm 均可：
+
 ```bash
-npm test          # 自检：会话 id 归一化、存储读写、注入取值
+npm install && npm run build   # 或 pnpm install && pnpm build
+npm test                        # 构建 + 自检：会话 id 归一化、存储读写、注入取值
 ```
 
-- `src/index.js`：宿主端。注册 `systemPrompt` 段落（每次组装提示词时按当前会话 id 取守则）和一个 `webServer` 精确路由。
-- `src/client.js`：浏览器端。会话头部按钮 + 弹窗编辑器。
+- `src/index.ts`：宿主端。注册 `systemPrompt` 段落（每次组装提示词时按当前会话 id 取守则）和一个 `webServer` 精确路由。
+- `src/client.ts`：浏览器端。tsc 直接产出的 classic script（`__ModuleLoader__` 工厂），不经过打包器；会话头部按钮 + 弹窗编辑器。
+- `tsconfig.json`：与 `dsh-app-packager` 插件同构（ES2022 / nodenext / declaration）。
 - `cordis.patch.yml`：安装为 bundle 时插入的插件行。
+
+从 git 安装时先 `npm run build`（或 `pnpm build`）生成 `dist/`；`dsh plugin add` 本地目录依赖它。
 
 ## License
 

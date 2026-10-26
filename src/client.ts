@@ -2,11 +2,11 @@
 //
 // A button in the conversation header opens a dialog where the user edits the
 // rules/notes for THIS conversation. Saved text is injected by the host half
-// into that session's system prompt (see src/index.js).
+// into that session's system prompt (see src/index.ts).
 //
 // Bundle protocol: classic script registering a lazy factory.
 
-window.__ModuleLoader__.load({
+(window as any).__ModuleLoader__.load({
   id: 'dsh-session-rules',
   factory(require) {
     const React = require('react')
@@ -86,8 +86,8 @@ window.__ModuleLoader__.load({
     }
 
     // --- dialog request store (header button -> overlay dialog) -------------
-    const listeners = new Set()
-    let request = null
+    const listeners: Set<() => void> = new Set()
+    let request: any = null
 
     function setRequest(next) {
       request = next
