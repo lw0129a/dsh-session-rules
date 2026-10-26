@@ -33,6 +33,15 @@
       'dialog.optimizing': '优化中…',
       'dialog.optimizeFailed': '优化失败（本地模型未运行？）',
       'dialog.optimized': '已优化，确认后点保存。',
+      'dialog.reviewTitle': '优化结果对比',
+      'dialog.reviewNote': '优化会把整段描述发给你配置的本机模型重新生成（消耗本机算力与时间，可能几十秒）；下面的「新描述」只在点「替换原描述」后才会生效，替换前的原文仍可复制留存。',
+      'dialog.original': '原描述',
+      'dialog.candidate': '新描述（可编辑）',
+      'dialog.copy': '复制',
+      'dialog.copied': '已复制',
+      'dialog.replace': '替换原描述',
+      'dialog.discardOptimize': '放弃本次优化',
+      'dialog.candidateEmpty': '模型返回了空内容，请重试。',
       'dialog.nothingToOptimize': '先写点内容再优化。',
       'dialog.pickHint': '选择要导入的项目规范文件（只读，不会修改原文件）：',
       'dialog.nothingFound': '没有找到项目规范文件（AGENTS.md / CLAUDE.md / .cursorrules 等）。',
@@ -57,6 +66,15 @@
       'dialog.optimizing': 'Polishing…',
       'dialog.optimizeFailed': 'Polish failed (is the local model running?)',
       'dialog.optimized': 'Polished — review it, then save.',
+      'dialog.reviewTitle': 'Review the polish',
+      'dialog.reviewNote': 'Polishing sends the whole text to your local model and can take a while. Nothing changes until you press “Replace original”; the original below stays copyable either way.',
+      'dialog.original': 'Original',
+      'dialog.candidate': 'New text (editable)',
+      'dialog.copy': 'Copy',
+      'dialog.copied': 'Copied',
+      'dialog.replace': 'Replace original',
+      'dialog.discardOptimize': 'Discard polish',
+      'dialog.candidateEmpty': 'The model returned nothing — try again.',
       'dialog.nothingToOptimize': 'Write something first.',
       'dialog.pickHint': 'Pick project guideline files to copy in (read-only, the originals are not modified):',
       'dialog.nothingFound': 'No project guideline file found (AGENTS.md / CLAUDE.md / .cursorrules …).',
@@ -225,6 +243,7 @@
       const [note, setNote] = React.useState(null)
       const [candidates, setCandidates] = React.useState(null)
       const [picked, setPicked] = React.useState({})
+      const [review, setReview] = React.useState(null)
 
       React.useEffect(() => {
         let cancelled = false
@@ -265,8 +284,9 @@
           })
           const body = await res.json()
           if (!body || body.ok !== true) throw new Error(t('dialog.optimizeFailed'))
-          setRules(normalizeBullets(String(body.rules)))
-          setNote(t('dialog.optimized'))
+          const candidate = normalizeBullets(String(body.rules ?? '')).trim()
+          if (candidate === '') throw new Error(t('dialog.candidateEmpty'))
+          setReview({ original: rules, candidate })
         } catch (cause) {
           setError(`${t('dialog.optimizeFailed')} ${String(cause?.message ?? cause)}`)
         } finally {
@@ -292,6 +312,16 @@
           setError(`${t('dialog.saveFailed')}: ${String(cause?.message ?? cause)}`)
         } finally {
           setBusy(false)
+        }
+      }
+
+      async function copyText(value) {
+        try {
+          await navigator.clipboard.writeText(value)
+          setNote(t('dialog.copied'))
+          setError(null)
+        } catch (cause) {
+          setError(`${t('dialog.saveFailed')}: ${String(cause?.message ?? cause)}`)
         }
       }
 
@@ -336,7 +366,43 @@
         setCandidates(null)
       }
 
-      const children = [
+      const reviewChildren = []
+      if (review !== null) {
+        reviewChildren.push(h('p', { key: 'note', style: { ...bodyStyle, margin: '0 0 10px' } }, t('dialog.reviewNote')))
+
+        const panel = (key, label, value, editable) => {
+          const area = h('textarea', {
+            key: `${key}Area`,
+            value,
+            readOnly: !editable,
+            spellCheck: false,
+            rows: 8,
+            onChange: editable
+              ? (event) => {
+                  const next = normalizeBullets(event.target.value)
+                  setReview((previous) => (previous === null ? previous : { ...previous, candidate: next }))
+                }
+              : undefined,
+            style: { ...textareaStyle, minHeight: 120, background: editable ? textareaStyle.background : 'var(--dsw-alias-bg-tertiary, #eef1f4)' },
+          })
+          return h(
+            'div',
+            { key, style: { display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 10 } },
+            h(
+              'div',
+              { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between' } },
+              h('span', { style: { ...bodyStyle, fontWeight: 600 } }, label),
+              h(Button, { variant: 'outline', size: 'sm', onClick: () => copyText(value) }, t('dialog.copy')),
+            ),
+            area,
+          )
+        }
+
+        reviewChildren.push(panel('original', t('dialog.original'), review.original, false))
+        reviewChildren.push(panel('candidate', t('dialog.candidate'), review.candidate, true))
+      }
+
+      const children = review !== null ? reviewChildren : [
         h(
           'label',
           {
@@ -406,15 +472,35 @@
         }
       }
 
-      const footer = [
-        h(
-          Button,
-          { key: 'import', variant: 'outline', size: 'sm', onClick: importPicked, disabled: busy || !Array.isArray(candidates) || candidates.length === 0 },
-          t('dialog.importPicked'),
-        ),
-        h(Button, { key: 'cancel', variant: 'outline', size: 'sm', onClick: props.onClose }, t('dialog.cancel')),
-        h(Button, { key: 'save', variant: 'outline', size: 'sm', onClick: save, disabled: busy || loading }, t('dialog.save')),
-      ]
+      const footer =
+        review !== null
+          ? [
+              h(Button, { key: 'discard', variant: 'outline', size: 'sm', onClick: () => { setReview(null); setNote(null); setError(null) } }, t('dialog.discardOptimize')),
+              h(
+                Button,
+                {
+                  key: 'replace',
+                  variant: 'outline',
+                  size: 'sm',
+                  onClick: () => {
+                    setRules(review.candidate)
+                    setReview(null)
+                    setNote(t('dialog.optimized'))
+                    setError(null)
+                  },
+                },
+                t('dialog.replace'),
+              ),
+            ]
+          : [
+              h(
+                Button,
+                { key: 'import', variant: 'outline', size: 'sm', onClick: importPicked, disabled: busy || !Array.isArray(candidates) || candidates.length === 0 },
+                t('dialog.importPicked'),
+              ),
+              h(Button, { key: 'cancel', variant: 'outline', size: 'sm', onClick: props.onClose }, t('dialog.cancel')),
+              h(Button, { key: 'save', variant: 'outline', size: 'sm', onClick: save, disabled: busy || loading }, t('dialog.save')),
+            ]
 
       return h(
         Modal,
