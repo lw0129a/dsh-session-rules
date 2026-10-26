@@ -1,0 +1,4 @@
+# Loads this plugin as a bundle when the package is installed into a profile.
+- insert:
+    - id: session-rules
+      name: dsh-session-rules

@@ -1,0 +1,42 @@
+{
+  "name": "dsh-session-rules",
+  "version": "0.1.0",
+  "description": "Per-session rules and notes for DeepSeek Harness: edit this conversation's constraints and coding conventions in a popup, import existing project guidelines read-only, and save rules extracted from the conversation. The saved text is injected into that session's system prompt on the next model call.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "prompt"
+  ],
+  "files": [
+    "src/",
+    "cordis.patch.yml",
+    "icon.svg",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./src/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "test": "node test/selfcheck.mjs"
+  },
+  "meta": {
+    "title": "Session Rules",
+    "description": "会话守则：为本会话设置注意事项与规范，支持导入项目现有规范（只读）和从对话中提炼保存。"
+  }
+}
