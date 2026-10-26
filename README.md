@@ -15,7 +15,7 @@
 dsh plugin --profile desktop add /path/to/dsh-session-rules
 ```
 
-装好后重启 DeepSeek Harness。重启后打开任意会话，输入框上方工具栏会出现「会话守则」按钮。
+装好后重启 DeepSeek Harness。重启后打开任意会话，输入框上方工具栏会出现「会话守则」按钮；侧栏会话列表里每个会话的 `⋯` 菜单中也有同一项「会话守则」。
 
 （GitHub 发布后也可直接 `dsh plugin --profile desktop add dsh-session-rules`。）
 
@@ -44,7 +44,7 @@ npm test                        # 构建 + 自检：会话 id 归一化、存储
 ```
 
 - `src/index.ts`：宿主端。注册 `systemPrompt` 段落（每次组装提示词时按当前会话 id 取守则）和一个 `webServer` 精确路由。
-- `src/client.ts`：浏览器端。tsc 直接产出的 classic script（`__ModuleLoader__` 工厂），不经过打包器；会话头部按钮 + 弹窗编辑器。
+- `src/client.ts`：浏览器端。tsc 直接产出的 classic script（`__ModuleLoader__` 工厂），不经过打包器；会话头部按钮、侧栏会话行 `⋯` 菜单项 + 共用的弹窗编辑器。
 - `tsconfig.json`：与 `dsh-app-packager` 插件同构（ES2022 / nodenext / declaration）。
 - `cordis.patch.yml`：安装为 bundle 时插入的插件行。
 

@@ -4,7 +4,11 @@
   "description": "Per-session rules and notes for DeepSeek Harness: edit this conversation's constraints and coding conventions in a popup, import existing project guidelines read-only, and save rules extracted from the conversation. The saved text is injected into that session's system prompt on the next model call.",
   "type": "module",
   "license": "MIT",
-  "keywords": ["dsh-plugin", "deepseek-harness", "prompt"],
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "prompt"
+  ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -12,14 +16,22 @@
     "./client": "./dist/client.js",
     "./package.json": "./package.json"
   },
-  "files": ["dist", "cordis.patch.yml", "icon.svg", "README.md"],
-  "engines": { "node": ">=20" },
+  "files": [
+    "dist",
+    "cordis.patch.yml",
+    "icon.svg",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "dsh": {
     "manifestVersion": 1,
-    "bundle": { "patch": "./cordis.patch.yml" },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
-      "platform": "web",
-      "inject": ["@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-locale"]
+      "platform": "web"
     }
   },
   "scripts": {

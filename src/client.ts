@@ -12,18 +12,22 @@
     const React = require('react')
     const primitives = require('@deepseek-ai/dsh-client-ui-primitives')
     const Button = primitives.Button
+    const MenuItemButton = primitives.MenuItemButton
     const Modal = primitives.Modal
     const h = React.createElement
 
     const HEADER_SLOT = 'conversation.session.header.actions'
+    const MENU_SLOT = 'sidebar.workspaces.session.menu.item'
     const OVERLAY_SLOT = 'shell.overlay'
     const HEADER_ID = 'session-rules.header'
+    const MENU_ID = 'session-rules.menu'
     const DIALOG_ID = 'session-rules.dialog'
     const ENDPOINT = '/__chameleon/session/rules'
     const NS = 'session-rules'
 
     const ZH = {
       'button.title': '会话守则',
+      'menu.title': '会话守则',
       'dialog.title': '会话守则',
       'dialog.hint': '这里写的内容会加入本会话的系统提示词，每轮对话生效；不影响其他会话，也不改动项目文件。',
       'dialog.placeholder': '例如：\n- 修改前先跑测试\n- 只改和相关功能有关的文件\n- 中文回复，少用列表',
@@ -41,6 +45,7 @@
     }
     const EN = {
       'button.title': 'Rules',
+      'menu.title': 'Session rules',
       'dialog.title': 'Session rules',
       'dialog.hint': 'Text here is added to this conversation’s system prompt on every turn. Other sessions and project files are untouched.',
       'dialog.placeholder': 'e.g.\n- Run the tests before changing code\n- Touch only files related to the task\n- Reply in Chinese',
@@ -125,6 +130,21 @@
         },
         text,
       )
+    }
+
+    // --- sidebar session-row menu item ---------------------------------------
+    // Same dialog as the header button: the row menu is the place users look
+    // for per-session actions, and the header can be crowded.
+    function MenuItem(props) {
+      const text = resolveText(seatOf(props), 'menu.title')
+      const openMenuState = props.useMenuOpenState
+      const menu = typeof openMenuState === 'function' ? openMenuState() : undefined
+      const closeMenu = menu && typeof menu[1] === 'function' ? menu[1] : null
+      const select = () => {
+        if (closeMenu !== null) closeMenu(false)
+        setRequest({ sessionId: props.sessionId, seat: seatOf(props) })
+      }
+      return h(MenuItemButton, { onSelect: select }, text)
     }
 
     // --- dialog -------------------------------------------------------------
@@ -336,6 +356,21 @@
       apply(ctx) {
         ctx.slots.inject(HEADER_SLOT, () =>
           ctx.slots.register({ name: HEADER_SLOT, id: HEADER_ID, order: 30, locale: NS }, HeaderButton),
+        )
+        // `sessionId` is a standard prop for every row entry; only the row
+        // owner's `useMenuOpenState` has to be contributed here.
+        ctx.slots.inject(MENU_SLOT, () =>
+          ctx.slots.register({
+            name: MENU_SLOT,
+            id: MENU_ID,
+            order: 500,
+            locale: NS,
+            inject: (standard, hookContext) => ({
+              hooks: {
+                menuOpenState: () => (typeof hookContext === 'function' ? hookContext : () => [false, () => {}]),
+              },
+            }),
+          }, MenuItem),
         )
         ctx.slots.inject(OVERLAY_SLOT, () =>
           ctx.slots.register({ name: OVERLAY_SLOT, id: DIALOG_ID, order: 100, locale: NS }, DialogHost),
