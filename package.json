@@ -37,7 +37,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "prepack": "npm run build",
-    "test": "npm run build && node test/selfcheck.mjs"
+    "test": "npm run build && node test/selfcheck.mjs",
+    "prepare": "npm run build"
   },
   "devDependencies": {
     "@types/node": "^26.6.5",
@@ -46,5 +47,13 @@
   "meta": {
     "title": "Session Rules",
     "description": "会话守则：为本会话设置注意事项与规范，支持导入项目现有规范（只读）和从对话中提炼保存。"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lw0129a/dsh-session-rules.git"
+  },
+  "homepage": "https://github.com/lw0129a/dsh-session-rules#readme",
+  "bugs": {
+    "url": "https://github.com/lw0129a/dsh-session-rules/issues"
   }
 }

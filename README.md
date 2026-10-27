@@ -19,7 +19,17 @@ dsh plugin --profile desktop add /path/to/dsh-session-rules
 
 装好后重启 DeepSeek Harness。重启后打开侧栏会话列表，每个会话右侧的 `⋯` 菜单里有「会话守则」一项。
 
-（GitHub 发布后也可直接 `dsh plugin --profile desktop add dsh-session-rules`。）
+也可以直接从 GitHub 装（会自动构建 `dist/`）：
+
+```bash
+dsh plugin --profile desktop add github:lw0129a/dsh-session-rules
+```
+
+或从 npm 装：
+
+```bash
+dsh plugin --profile desktop add dsh-session-rules
+```
 
 ## 使用
 
