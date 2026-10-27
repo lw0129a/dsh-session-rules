@@ -30,6 +30,10 @@
       'dialog.placeholder': '例如：\n- 修改前先跑测试\n- 只改和相关功能有关的文件\n- 中文回复，少用列表',
       'dialog.import': '导入项目规范',
       'dialog.optimize': '优化描述',
+      'dialog.confirmTitle': '优化前请确认',
+      'dialog.confirmBody': '会用当前会话所用的模型重写整段内容，原描述不会立刻改动，稍后可在新旧对照里选择是否替换。',
+      'dialog.confirmPoints': '注意：\n- 内容会发送给你当前配置的模型厂商，按 token 计费\n- 重写可能改变措辞、合并或删减你认为重要的句子\n- 生成通常需要几秒到几十秒\n- 结果不满意可放弃本次优化，原描述保留',
+      'dialog.confirmStart': '开始优化',
       'dialog.optimizing': '优化中…',
       'dialog.optimizeFailed': '优化失败（当前会话模型没响应，可稍后重试）',
       'dialog.optimized': '已优化，确认后点保存。',
@@ -63,6 +67,10 @@
       'dialog.placeholder': 'e.g.\n- Run the tests before changing code\n- Touch only files related to the task\n- Reply in Chinese',
       'dialog.import': 'Import project guidelines',
       'dialog.optimize': 'Polish',
+      'dialog.confirmTitle': 'Before polishing',
+      'dialog.confirmBody': 'The session model rewrites the whole text. Your original stays untouched until you accept the result in the comparison view.',
+      'dialog.confirmPoints': 'Heads up:\n- The text goes to your configured model provider and is billed per token\n- Rewording may merge or drop sentences you care about\n- It usually takes seconds to tens of seconds\n- You can discard the result; the original is kept',
+      'dialog.confirmStart': 'Start polishing',
       'dialog.optimizing': 'Polishing…',
       'dialog.optimizeFailed': 'Polish failed (the session model did not answer — try again)',
       'dialog.optimized': 'Polished — review it, then save.',
@@ -244,6 +252,7 @@
       const [candidates, setCandidates] = React.useState(null)
       const [picked, setPicked] = React.useState({})
       const [review, setReview] = React.useState(null)
+      const [confirmOpen, setConfirmOpen] = React.useState(false)
 
       React.useEffect(() => {
         let cancelled = false
@@ -501,6 +510,36 @@
               h(Button, { key: 'save', variant: 'outline', size: 'sm', onClick: save, disabled: busy || loading }, t('dialog.save')),
             ]
 
+      if (confirmOpen) {
+        return h(
+          Modal,
+          {
+            open: true,
+            onClose: () => setConfirmOpen(false),
+            title: t('dialog.confirmTitle'),
+            closeLabel: t('dialog.cancel'),
+            description: t('dialog.confirmBody'),
+            footer: [
+              h(Button, { key: 'cancel', variant: 'outline', size: 'sm', onClick: () => setConfirmOpen(false) }, t('dialog.cancel')),
+              h(
+                Button,
+                {
+                  key: 'start',
+                  variant: 'outline',
+                  size: 'sm',
+                  onClick: () => {
+                    setConfirmOpen(false)
+                    void optimize()
+                  },
+                },
+                t('dialog.confirmStart'),
+              ),
+            ],
+          },
+          h('p', { style: { ...bodyStyle, margin: 0, whiteSpace: 'pre-line' } }, t('dialog.confirmPoints')),
+        )
+      }
+
       return h(
         Modal,
         {
@@ -522,7 +561,7 @@
                     'div',
                     { key: 'importRow', style: { marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' } },
                     h(Button, { variant: 'outline', size: 'sm', onClick: loadCandidates, disabled: busy || loading }, t('dialog.import')),
-                    h(Button, { variant: 'outline', size: 'sm', onClick: optimize, disabled: busy || loading }, busy ? t('dialog.optimizing') : t('dialog.optimize')),
+                    h(Button, { variant: 'outline', size: 'sm', onClick: () => { if (rules.trim() === '') { setNote(t('dialog.nothingToOptimize')); return } setConfirmOpen(true) }, disabled: busy || loading }, busy ? t('dialog.optimizing') : t('dialog.optimize')),
                   ),
             ].filter((item) => item !== null),
       )
