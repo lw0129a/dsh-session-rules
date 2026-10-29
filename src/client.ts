@@ -57,12 +57,12 @@
       'dialog.loadFailed': '读取失败',
       'dialog.saveFailed': '保存失败',
       'dialog.empty': '（尚未设置，留空即不注入）',
-      'dialog.scope': '作用范围：',
-      'dialog.scopeSession': '本会话',
-      'dialog.scopeGlobal': '所有会话',
-      'dialog.globalHint': '通用守则默认不生效：每个会话要在自己的弹窗里勾选「启用通用守则」才会加上它。',
-      'dialog.enabledGlobal': '对所有会话生效',
-      'dialog.inheritGlobal': '启用「所有会话」的通用守则（默认关闭）',
+      'dialog.sessionSection': '本会话守则',
+      'dialog.sharedSection': '工作区通用守则',
+      'dialog.sharedHint': '同一工作区（同一目录）的所有会话共用这一份，只能在会话里修改并保存，不提供删除；默认关闭，每个会话要自己勾选下方开关才会生效。',
+      'dialog.sharedUnavailable': '未能识别本会话的工作区，本次只能编辑本会话守则。',
+      'dialog.inheritShared': '对本会话启用工作区通用守则（默认关闭）',
+      'dialog.sharedPlaceholder': '例如：\n- 本工作区统一用 pnpm\n- 提交前跑 npm test',
       'dialog.enabled': '对本会话生效',
       'dialog.disabledHint': '已关闭：守则内容保留，但不会加入本会话的系统提示词。',
     }
@@ -100,12 +100,12 @@
       'dialog.loadFailed': 'Could not load',
       'dialog.saveFailed': 'Could not save',
       'dialog.empty': '(empty — nothing is injected)',
-      'dialog.scope': 'Applies to: ',
-      'dialog.scopeSession': 'this session',
-      'dialog.scopeGlobal': 'all sessions',
-      'dialog.globalHint': 'Off by default — each conversation only gets these rules after you tick the shared-rules box in its own dialog.',
-      'dialog.enabledGlobal': 'Apply to all sessions',
-      'dialog.inheritGlobal': 'Also apply the shared rules (off by default)',
+      'dialog.sessionSection': 'This session',
+      'dialog.sharedSection': 'Workspace rules',
+      'dialog.sharedHint': 'Shared by every session in this workspace (same directory). Editable here only — no delete; off by default, each session must tick the box below.',
+      'dialog.sharedUnavailable': 'This session’s workspace could not be located, so only the session rules can be edited here.',
+      'dialog.inheritShared': 'Apply the workspace rules to this session (off by default)',
+      'dialog.sharedPlaceholder': 'e.g.\n- This workspace uses pnpm\n- Run the tests before committing',
       'dialog.enabled': 'Apply to this session',
       'dialog.disabledHint': 'Off — the rules are kept but not added to this session’s system prompt.',
     }
@@ -254,9 +254,11 @@
       const seat = props.seat
       const sessionId = props.sessionId
       const t = (key) => resolveText(seat, key)
-      const [scope, setScope] = React.useState('session')
-      // '*' is the host's reserved store key for rules shared by all sessions.
-      const targetId = scope === 'global' ? '*' : sessionId
+      // The shared block belongs to this session's workspace; the host resolves
+      // and owns that store key. `shared === null` means it cannot be located.
+      const [shared, setShared] = React.useState(null)
+      const [sharedRules, setSharedRules] = React.useState('')
+      const [sharedSources, setSharedSources] = React.useState([])
       const [rules, setRules] = React.useState('')
       const [sources, setSources] = React.useState([])
       const [enabled, setEnabled] = React.useState(false)
@@ -277,7 +279,10 @@
         setNote(null)
         setRules('')
         setSources([])
-        fetch(`${ENDPOINT}?sessionId=${encodeURIComponent(targetId)}`, { credentials: 'same-origin' })
+        setShared(null)
+        setSharedRules('')
+        setSharedSources([])
+        fetch(`${ENDPOINT}?sessionId=${encodeURIComponent(sessionId)}`, { credentials: 'same-origin' })
           .then((res) => res.json())
           .then((body) => {
             if (cancelled) return
@@ -286,6 +291,12 @@
             setSources(Array.isArray(body.sources) ? body.sources : [])
             setEnabled(body.enabled === true)
             setInherit(body.inherit === true)
+            const scope = body.shared
+            if (scope !== null && typeof scope === 'object') {
+              setShared({ workspace: typeof scope.workspace === 'string' ? scope.workspace : '' })
+              setSharedRules(typeof scope.rules === 'string' ? scope.rules : '')
+              setSharedSources(Array.isArray(scope.sources) ? scope.sources : [])
+            }
           })
           .catch((cause) => {
             if (!cancelled) setError(`${t('dialog.loadFailed')}: ${String(cause?.message ?? cause)}`)
@@ -296,7 +307,7 @@
         return () => {
           cancelled = true
         }
-      }, [targetId])
+      }, [sessionId])
 
       async function optimize() {
         if (rules.trim() === '') {
@@ -334,7 +345,16 @@
             method: 'POST',
             credentials: 'same-origin',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ sessionId: targetId, rules, sources, enabled, inherit }),
+            body: JSON.stringify({
+              sessionId,
+              rules,
+              sources,
+              enabled,
+              inherit,
+              // Present only when the workspace could be located; the host also
+              // re-derives the workspace key on its own.
+              ...(shared === null ? {} : { sharedRules, sharedSources }),
+            }),
           })
           const body = await res.json()
           if (!body || body.ok !== true) throw new Error(body?.error ?? `HTTP ${res.status}`)
@@ -433,68 +453,72 @@
         reviewChildren.push(panel('candidate', t('dialog.candidate'), review.candidate, true))
       }
 
-      const scopeRow = h(
-        'div',
-        { key: 'scope', style: { display: 'flex', alignItems: 'center', gap: 12, margin: '0 0 10px', fontSize: 13 } },
-        h('span', { style: { ...bodyStyle, margin: 0 } }, t('dialog.scope')),
-        ...[['session', 'dialog.scopeSession'], ['global', 'dialog.scopeGlobal']].map(([id, label]) =>
-          h(
-            'label',
-            { key: id, style: { display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' } },
-            h('input', {
-              type: 'radio',
-              name: 'session-rules-scope',
-              checked: scope === id,
-              onChange: () => setScope(id),
-              style: { accentColor: 'var(--dsw-alias-brand-primary, #0969da)', cursor: 'pointer' },
-            }),
-            h('span', null, t(label)),
-          ),
-        ),
-      )
-
-      const children = review !== null ? reviewChildren : [
-        scopeRow,
-        scope === 'global' ? h('p', { key: 'globalHint', style: { ...bodyStyle, margin: '0 0 10px' } }, t('dialog.globalHint')) : null,
-        scope === 'global'
-          ? null
-          : h(
-              'label',
-              {
-                key: 'inherit',
-                style: { display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 10px', fontSize: 13, cursor: 'pointer', userSelect: 'none' },
-              },
-              h('input', {
-                type: 'checkbox',
-                checked: inherit,
-                onChange: (event) => setInherit(event.target.checked),
-                style: { width: 14, height: 14, accentColor: 'var(--dsw-alias-brand-primary, #0969da)', cursor: 'pointer' },
-              }),
-              h('span', null, t('dialog.inheritGlobal')),
-            ),
+      const checkbox = (key, checked, onChange, label) =>
         h(
           'label',
           {
-            key: 'toggle',
+            key,
             style: {
               display: 'flex',
               alignItems: 'center',
               gap: 8,
               margin: '0 0 10px',
               fontSize: 13,
-              color: 'var(--dsw-alias-text-primary, #1f2328)',
               cursor: 'pointer',
               userSelect: 'none',
             },
           },
           h('input', {
             type: 'checkbox',
-            checked: enabled,
-            onChange: (event) => setEnabled(event.target.checked),
+            checked,
+            onChange: (event) => onChange(event.target.checked),
             style: { width: 14, height: 14, accentColor: 'var(--dsw-alias-brand-primary, #0969da)', cursor: 'pointer' },
           }),
-          h('span', null, scope === 'global' ? t('dialog.enabledGlobal') : t('dialog.enabled')),
-        ),
+          h('span', null, label),
+        )
+
+      const sectionTitle = (key, label, extra?) =>
+        h(
+          'p',
+          { key, style: { ...bodyStyle, fontWeight: 600, margin: extra === undefined ? '0 0 6px' : extra } },
+          label,
+        )
+
+      const sharedBlock =
+        shared === null
+          ? h('p', { key: 'noShared', style: { ...bodyStyle, margin: '14px 0 0' } }, t('dialog.sharedUnavailable'))
+          : h(
+              'div',
+              { key: 'sharedBlock', style: { margin: '14px 0 0' } },
+              sectionTitle(
+                'sharedTitle',
+                shared.workspace === ''
+                  ? t('dialog.sharedSection')
+                  : `${t('dialog.sharedSection')} — ${shared.workspace}`,
+              ),
+              h('p', { key: 'sharedHint', style: { ...bodyStyle, margin: '0 0 10px' } }, t('dialog.sharedHint')),
+              checkbox('inherit', inherit, setInherit, t('dialog.inheritShared')),
+              h('textarea', {
+                key: 'sharedEditor',
+                value: sharedRules,
+                placeholder: t('dialog.sharedPlaceholder'),
+                spellCheck: false,
+                rows: 8,
+                onChange: (event) => setSharedRules(normalizeBullets(event.target.value)),
+                style: textareaStyle,
+              }),
+              sharedSources.length > 0
+                ? h(
+                    'p',
+                    { key: 'sharedSources', style: { ...bodyStyle, margin: '8px 0 0' } },
+                    `${t('dialog.sources')}${sharedSources.join('、')}`,
+                  )
+                : null,
+            )
+
+      const children = review !== null ? reviewChildren : [
+        sectionTitle('sessionTitle', t('dialog.sessionSection')),
+        checkbox('toggle', enabled, setEnabled, t('dialog.enabled')),
         h('textarea', {
           key: 'editor',
           value: rules,
@@ -504,6 +528,7 @@
           onChange: (event) => setRules(withBulletCaret(event.target)),
           style: textareaStyle,
         }),
+        sharedBlock,
       ].filter((item) => item !== null)
       if (sources.length > 0) {
         children.push(

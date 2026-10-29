@@ -8,7 +8,7 @@ const home = mkdtempSync(path.join(tmpdir(), 'dsh-session-rules-'))
 process.env.DSH_HOME = home
 
 const { __test } = await import('../dist/index.js')
-const { rulesFor, entryOf, idCandidates, projectFiles } = __test
+const { rulesFor, entryOf, idCandidates, projectFiles, workspaceOf } = __test
 
 // Session ids reach us as `session-<uuid>` in the client and at prompt
 // assembly; the store must find either spelling.
@@ -44,32 +44,42 @@ store({ abc: { rules: '先跑测试', sources: [], enabled: false } })
 assert.equal(rulesFor('abc'), '')
 assert.equal(rulesFor('session-abc'), '')
 
-// Shared rules (store key '*') are off by default and need both switches.
-store({ '*': { rules: '通用：中文回复', sources: [] }, abc: { rules: '本会话：先跑测试', sources: [], enabled: true } })
+// Shared rules live per workspace: the sessions tree decides which block a
+// session belongs to, and the session opts in with `inherit`.
+mkdirSync(path.join(home, 'sessions', '--tmp-ws--'), { recursive: true })
+writeFileSync(path.join(home, 'sessions', '--tmp-ws--', 'session-abc'), '')
+const WS_KEY = 'ws:--tmp-ws--'
+
+store({ [WS_KEY]: { rules: '工作区：统一用 pnpm' }, abc: { rules: '本会话：先跑测试', sources: [], enabled: true } })
 assert.equal(rulesFor('abc'), '本会话：先跑测试')
 assert.equal(rulesFor('session-other'), '')
 
 store({
-  '*': { rules: '通用：中文回复', sources: [], enabled: true },
+  [WS_KEY]: { rules: '工作区：统一用 pnpm' },
   abc: { rules: '本会话：先跑测试', sources: [], enabled: true, inherit: true },
 })
-assert.equal(rulesFor('abc'), '通用：中文回复\n\n本会话：先跑测试')
-assert.equal(rulesFor('session-other'), '')
+assert.equal(rulesFor('abc'), '工作区：统一用 pnpm\n\n本会话：先跑测试')
+assert.equal(rulesFor('session-abc'), '工作区：统一用 pnpm\n\n本会话：先跑测试')
 
-// The shared block switches off on its own.
+// A session in another workspace never sees this block.
+mkdirSync(path.join(home, 'sessions', '--tmp-other--'), { recursive: true })
+writeFileSync(path.join(home, 'sessions', '--tmp-other--', 'session-xyz'), '')
 store({
-  '*': { rules: '通用：中文回复', sources: [], enabled: false },
-  abc: { rules: '本会话：先跑测试', sources: [], enabled: true, inherit: true },
+  [WS_KEY]: { rules: '工作区：统一用 pnpm' },
+  xyz: { rules: '', sources: [], enabled: false, inherit: true },
 })
+assert.equal(rulesFor('xyz'), '')
+
+// The shared block alone is enough: the session may keep no rules of its own.
+store({ [WS_KEY]: { rules: '工作区：统一用 pnpm' }, abc: { rules: '', sources: [], enabled: false, inherit: true } })
+assert.equal(rulesFor('abc'), '工作区：统一用 pnpm')
+
+// An empty shared block injects nothing.
+store({ [WS_KEY]: { rules: '   ' }, abc: { rules: '本会话：先跑测试', sources: [], enabled: true, inherit: true } })
 assert.equal(rulesFor('abc'), '本会话：先跑测试')
 
-// A session that keeps only its own rules ignores the shared ones.
-store({
-  '*': { rules: '通用：中文回复', sources: [], enabled: true },
-  abc: { rules: '本会话：先跑测试', sources: [], enabled: true, inherit: false },
-})
-assert.equal(rulesFor('abc'), '本会话：先跑测试')
-assert.equal(rulesFor('session-other'), '')
+// The workspace block is discovered from the sessions tree, not from the store.
+assert.equal(workspaceOf('session-abc'), '--tmp-ws--')
 
 // No sessions directory => nothing to import, and no throw.
 assert.deepEqual(projectFiles('session-abc'), [])

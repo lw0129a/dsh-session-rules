@@ -85,29 +85,37 @@ function idCandidates(sessionId) {
   return [...new Set([sessionId, bare, `session-${bare}`])]
 }
 
-// Reserved store key for the rules that apply to every session.
-const GLOBAL_KEY = '*'
-
-function isTargetId(value) {
-  return value === GLOBAL_KEY || isSessionId(value)
+// Shared rules live under one store key per workspace directory, so every
+// session started in the same workspace edits the same block.
+function sharedKey(dirName) {
+  return `ws:${dirName}`
 }
 
 // Evaluated at every prompt assembly: a broken store must never take prompt
 // assembly down, so failures fall back to "no rules".
-// Order: the shared ('*') rules first, then this session's own. A session can
-// opt out of the shared ones with its `inherit` flag.
+// Order: this workspace's shared rules first, then this session's own. A
+// session opts into the shared ones with its `inherit` flag.
 function rulesFor(sessionId) {
   if (!isSessionId(sessionId)) return ''
   try {
     const store = readStore()
     const own = ownEntry(store, sessionId)
     const parts = []
-    if (own.inherit) parts.push(activeRules(entryOf(store, GLOBAL_KEY)))
+    if (own.inherit) {
+      const workspace = workspaceEntry(sessionId)
+      if (workspace !== undefined) parts.push(sharedText(entryOf(store, workspace.key)))
+    }
     if (own.enabled) parts.push(activeRules(own))
     return parts.filter((part) => part !== '').join('\n\n')
   } catch {
     return ''
   }
+}
+
+// Shared rules have no switch of their own: `inherit` on the session decides,
+// and an empty block injects nothing.
+function sharedText(entry) {
+  return entry.rules.trim()
 }
 
 function activeRules(entry) {
@@ -119,7 +127,7 @@ function ownEntry(store, sessionId) {
 }
 
 function storeKey(store, sessionId) {
-  return sessionId === GLOBAL_KEY ? GLOBAL_KEY : keyFor(store, sessionId)
+  return keyFor(store, sessionId)
 }
 
 function keyFor(store, sessionId) {
@@ -192,7 +200,10 @@ function decodeWorkspace(encoded) {
   return undefined
 }
 
-function workspaceOf(sessionId) {
+// The sessions tree is <DSH_HOME>/sessions/<encoded workspace>/<session id>, so
+// the directory name is a stable per-workspace identity even before it decodes
+// back to an existing path.
+function workspaceEntry(sessionId) {
   const root = path.join(dshHome(), 'sessions')
   let entries
   try {
@@ -203,10 +214,16 @@ function workspaceOf(sessionId) {
   for (const entry of entries) {
     if (!entry.isDirectory()) continue
     for (const candidate of idCandidates(sessionId)) {
-      if (existsSync(path.join(root, entry.name, candidate))) return decodeWorkspace(entry.name)
+      if (existsSync(path.join(root, entry.name, candidate))) {
+        return { key: sharedKey(entry.name), label: decodeWorkspace(entry.name) ?? entry.name }
+      }
     }
   }
   return undefined
+}
+
+function workspaceOf(sessionId) {
+  return workspaceEntry(sessionId)?.label
 }
 
 function readCapped(file) {
@@ -308,12 +325,13 @@ async function handleRequest(ctx, req, res) {
 
   if (req.method === 'GET') {
     const sessionId = url.searchParams.get('sessionId') ?? ''
-    if (!isTargetId(sessionId)) {
+    if (!isSessionId(sessionId)) {
       sendJson(res, 400, { ok: false, error: 'sessionId is required' })
       return
     }
     const store = readStore()
     const entry = entryOf(store, storeKey(store, sessionId))
+    const workspace = workspaceEntry(sessionId)
     const body: any = {
       ok: true,
       sessionId,
@@ -321,6 +339,16 @@ async function handleRequest(ctx, req, res) {
       sources: entry.sources,
       enabled: entry.enabled,
       inherit: entry.inherit,
+      // null when the session's workspace cannot be located: the dialog then
+      // hides the shared editor instead of writing to a guessed key.
+      shared:
+        workspace === undefined
+          ? null
+          : {
+              workspace: workspace.label,
+              rules: entryOf(store, workspace.key).rules,
+              sources: entryOf(store, workspace.key).sources,
+            },
     }
     if (url.searchParams.get('candidates') === '1' && isSessionId(sessionId)) body.files = projectFiles(sessionId)
     sendJson(res, 200, body)
@@ -360,7 +388,7 @@ async function handleRequest(ctx, req, res) {
   }
 
   const sessionId = typeof payload?.sessionId === 'string' ? payload.sessionId.trim() : ''
-  if (!isTargetId(sessionId)) {
+  if (!isSessionId(sessionId)) {
     sendJson(res, 400, { ok: false, error: 'sessionId is required' })
     return
   }
@@ -374,8 +402,23 @@ async function handleRequest(ctx, req, res) {
   const rawSources = Array.isArray(payload?.sources) ? payload.sources : []
   const sources = rawSources.filter((item) => typeof item === 'string' && item.length <= 500).slice(0, 100)
 
+  // The workspace key is derived here, never taken from the client, so a
+  // crafted body cannot write another workspace's block.
+  const hasShared = Object.prototype.hasOwnProperty.call(payload, 'sharedRules')
+  const sharedRules = typeof payload?.sharedRules === 'string' ? payload.sharedRules : ''
+  if (sharedRules.length > 100000) {
+    sendJson(res, 413, { ok: false, error: 'shared rules too long' })
+    return
+  }
+  const rawSharedSources = Array.isArray(payload?.sharedSources) ? payload.sharedSources : []
+  const sharedSources = rawSharedSources.filter((item) => typeof item === 'string' && item.length <= 500).slice(0, 100)
+  const workspace = workspaceEntry(sessionId)
+
   const store = readStore()
   store[storeKey(store, sessionId)] = { rules, sources, enabled, inherit, updatedAt: new Date().toISOString() }
+  if (hasShared && workspace !== undefined) {
+    store[workspace.key] = { rules: sharedRules, sources: sharedSources, updatedAt: new Date().toISOString() }
+  }
   try {
     writeStore(store)
   } catch (error) {
@@ -383,7 +426,15 @@ async function handleRequest(ctx, req, res) {
     sendJson(res, 500, { ok: false, error: 'could not save rules' })
     return
   }
-  sendJson(res, 200, { ok: true, sessionId, rules, sources, enabled, inherit })
+  sendJson(res, 200, {
+    ok: true,
+    sessionId,
+    rules,
+    sources,
+    enabled,
+    inherit,
+    shared: workspace === undefined ? null : { workspace: workspace.label, rules: sharedRules, sources: sharedSources },
+  })
 }
 
 // --- plugin entry ----------------------------------------------------------
@@ -422,4 +473,13 @@ export function apply(ctx) {
 
 // Exposed for the self-check: the store helpers and the handler are plain
 // functions that take their dependencies explicitly.
-export const __test = { handleRequest, rulesFor, entryOf, idCandidates, projectFiles, workspaceOf, optimizeRules }
+export const __test = {
+  handleRequest,
+  rulesFor,
+  entryOf,
+  idCandidates,
+  projectFiles,
+  workspaceOf,
+  workspaceEntry,
+  optimizeRules,
+}
