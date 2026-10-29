@@ -538,8 +538,9 @@
       h('span', null, label),
     )
 
-  const undoKey = process.platform === 'darwin' ? '⌘Z' : 'Ctrl+Z'
-  const redoKey = process.platform === 'darwin' ? '⇧⌘Z' : 'Ctrl+Y'
+  const apple = isApplePlatform()
+  const undoKey = apple ? '⌘Z' : 'Ctrl+Z'
+  const redoKey = apple ? '⇧⌘Z' : 'Ctrl+Y'
   const hintStyle = {
     margin: '6px 0 0',
     fontSize: 12,

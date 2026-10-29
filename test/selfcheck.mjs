@@ -33,6 +33,19 @@ function sourceOf(name) {
   return source.slice(start, end)
 }
 
+const clientBundle = readFileSync(new URL('../dist/client.js', import.meta.url), 'utf8')
+// The web renderer has no Node globals: touching any of them kills the whole
+// client bundle at load time (0.7.4 shipped `process.platform` and did exactly that).
+for (const [pattern, why] of [
+  [/\bprocess\s*\./, 'process'],
+  [/\b__dirname\b/, '__dirname'],
+  [/\b__filename\b/, '__filename'],
+  [/\bBuffer\s*\./, 'Buffer'],
+  [/\brequire\(\s*['"]node:/, 'node: modules'],
+]) {
+  assert.doesNotMatch(clientBundle, pattern, `browser bundle must not access ${why}`)
+}
+
 const clientSource = readFileSync(new URL('../src/client.ts', import.meta.url), 'utf8')
 const listItemLine = [
   'const LIST_ITEM =',
