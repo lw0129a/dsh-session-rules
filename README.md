@@ -1,6 +1,6 @@
 # dsh-session-rules · 会话守则
 
-> **English** — Workspace- and session-scoped rules for DeepSeek Harness. The UI follows the app's language (Chinese or English). Each workspace keeps one rules block; a child workspace can only tick which ancestor blocks it inherits, never edit them. A session ticks any subset of its workspace chain plus its own block; nothing is applied until ticked. Saved text is injected into that session's system prompt from the next turn on. Rules are stored under `$DSH_HOME/plugin-data/dsh-session-rules/rules.json`; deleting a workspace or a session drops its block. See 「权限与影响范围」 below for the full list of what the plugin reads, writes and registers.
+**简体中文** · [English](README.en.md)
 
 给 DeepSeek Harness 设置会话守则的插件。工作区行 `⋯` 菜单里是「工作区守则」：按工作区（目录）维护守则，目录有层级时子目录只能勾选是否沿用上层、改不了上层。会话行 `⋯` 菜单里是「会话守则」：写本会话的内容，并逐层勾选要带进来的工作区守则。新建的工作区即使还没有会话也能配置。保存后从**下一轮**开始生效。所有开关**默认关闭**：写完内容还要勾「对本会话生效」/勾选要沿用的工作区层，才会进入系统提示词（关掉时内容保留、不注入）。不会修改任何项目文件或 Harness 文件。
 
@@ -10,9 +10,8 @@
 - **编码规范**：缩进、命名、注释语言、提交信息风格。
 - **优化描述**：调当前会话所用的模型（harness 的 LLM 服务，跟随 App 里配置的 provider/model）把草稿整理成可执行的条目，结果不会直接覆盖：弹窗先并排展示「原描述 / 新描述」（都可复制，新描述可改），点「替换原描述」才生效。模型不可用时按钮只是报错，手写不受影响。
 - 输入框里**每行自动是「- 」开头**的条目：前缀在输入或换行时自动补上、删不掉；空行保留用于分组。
-- **稍后版本**（0.2）：从当前对话里提炼关键信息并保存/优化。
 
-工作区行 `⋯` 菜单没有官方扩展槽位，那一项是靠 DOM 增强加进去的（复用内置菜单项的样式与键盘行为）；DSH 改侧栏结构时它可能失效，失效时底部按钮仍在。
+工作区行 `⋯` 菜单在 DSH 里没有官方扩展槽位，那一项是靠 DOM 增强加进去的（复用内置菜单项的样式与键盘行为）；DSH 改侧栏结构时它可能失效。
 
 ## 安装
 
@@ -37,7 +36,6 @@ dsh plugin --profile desktop add dsh-session-rules
 ## 使用
 
 - **工作区守则**：侧边栏工作区行的 `⋯` 菜单 →「工作区守则」，选一个工作区写。**新建的工作区即使还没有任何会话也能配置**（只要 DSH 已把它登记进工作区列表）。
-- **工作区行的「会话守则」**：打开该工作区里最近一个会话的守则，省得再去点会话行。
 - **会话守则**：会话行 `⋯` 菜单 →「会话守则」，写本会话的内容，并在卡片里逐层勾选要带进来的工作区守则（可多选，只读）。
 - 「保存」→ 下一轮对话生效；清空内容再保存 = 取消注入。
 
