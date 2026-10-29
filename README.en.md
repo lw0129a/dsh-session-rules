@@ -2,98 +2,64 @@
 
 [简体中文](README.md) · **English**
 
-Workspace- and session-scoped rules for DeepSeek Harness. The popup UI follows the app's language (Chinese or English).
+Two kinds of rules for DeepSeek Harness: **workspace rules** (one block per directory; sub-directories can inherit from their parents) and **session rules** (this conversation only). The text rides along in that session's system prompt, which makes it a good place for standing preferences, coding conventions, or a temporary constraint for this round.
 
-Open the `⋯` menu on a workspace row → **Workspace rules**: one rules block per workspace directory; when directories nest, a child can only tick which ancestor blocks it inherits, never edit them. Open the `⋯` menu on a session row → **Session rules**: write this session's own block and tick, level by level, which workspace blocks to pull in (multi-select, read-only). A workspace with no sessions yet can still be configured. Saved text takes effect from the **next turn**. Every switch defaults to **off**: writing text is not enough, you also tick "apply to this session" / the workspace levels you want — otherwise the text stays stored and is not injected. Nothing outside the plugin's own data file is written.
-
-Typical use:
-
-- **Guardrails**: don't touch that directory this round, don't bump dependencies, run the tests before reporting back.
-- **Coding conventions**: indentation, naming, comment language, commit message style.
-- **Polish draft**: ask the model this session already uses (Harness's own `llm` service, whatever provider/model the app is configured with) to turn rough notes into executable bullets. The result never overwrites silently: the popup shows "original / rewritten" side by side and only "replace original" applies it. If the model is unavailable the button reports an error and manual editing still works.
-- Every line of the editor is a `- ` bullet automatically (the prefix is added on input and newline, and cannot be deleted); blank lines stay for grouping.
-
-The workspace `⋯` menu has no official extension slot in DSH: that item is added by DOM enhancement (it reuses the built-in item's style and keyboard behaviour). It may break when DSH reshapes its sidebar.
+Every switch is **off by default**: writing text without ticking anything sends nothing.
 
 ## Install
 
 ```bash
+# a local directory
 dsh plugin --profile desktop add /path/to/dsh-session-rules
-```
 
-Restart DeepSeek Harness afterwards. Both entries (`⋯` on a workspace row, `⋯` on a session row) appear in the sidebar.
-
-From GitHub (builds `dist/` on install):
-
-```bash
+# or straight from GitHub (builds on install)
 dsh plugin --profile desktop add github:lw0129a/dsh-session-rules
-```
 
-From npm:
-
-```bash
+# or from npm
 dsh plugin --profile desktop add dsh-session-rules
 ```
 
-## Usage
+Restart DeepSeek Harness afterwards.
 
-- **Workspace rules**: `⋯` on a workspace row → "Workspace rules". A workspace with no sessions yet can be configured as long as DSH has registered it.
-- **Session rules**: `⋯` on a session row → "Session rules". Write this session's block, and tick any number of workspace levels to bring in (read-only preview per level).
-- "Save" → effective from the next turn; save with empty text = stop injecting.
+## Using it
 
-Rules live in `~/.dsh/plugin-data/dsh-session-rules/rules.json` (`DSH_HOME` overrides): session blocks keyed by session id, workspace blocks keyed by `ws:<absolute path>` (e.g. `ws:/Users/you/project`). The hierarchy is the paths themselves: every ancestor of a workspace (that is also a registered workspace) can hold its own block, and a child records which ancestors it inherits in `inherit`. Injection order is "ticked ancestors (outer → inner) → this level → this session". Everything is **off by default**; only explicit ticks reach the system prompt.
+**Workspace rules** — `⋯` on a workspace row in the sidebar → "Workspace rules".
 
-## Scope and cost
+- Put what every session under that directory should follow: "run `npm test` before reporting back", "only touch files the request mentions".
+- When workspaces nest (`work` → `anjuyi` → `uni-platform-app`), a child can only **tick which parent blocks it inherits**; it cannot edit them.
+- A workspace with no sessions yet can still be configured.
 
-- **Sent every turn**: once "apply to this session" (or "apply workspace rules") is ticked, the text becomes part of the system prompt and is sent on **every** turn of that session; untick it and nothing is sent, the text just stays on disk. Edits apply from the next turn; earlier turns are not rewritten.
-- **More levels, more tokens**: workspace rules accumulate by level — ticking three levels puts three blocks into the prompt. Tick only what the session actually needs.
-- **Where the hierarchy comes from**: the workspace directory paths, which match the sidebar's "View options → Group by → Workspace tree". That grouping is DSH's own setting and the plugin does not change it; without the tree view everything still works, the sidebar just shows a different shape.
+**Session rules** — `⋯` on a session row → "Session rules".
 
-## Where the data lives / when it disappears
+- Write what only applies to this conversation.
+- The workspace section lists the chain level by level; tick any levels you want (multi-select). Those are read-only here — edit them in the workspace panel.
 
-- **Location**: `$DSH_HOME/plugin-data/dsh-session-rules/rules.json` (default `~/.dsh/plugin-data/dsh-session-rules/rules.json`), owned by this plugin, version-free path.
-- **Survives upgrades**: upgrading swaps the code directory only; data is stored per plugin name. Copy that file to migrate machines.
-- **Disabled / not loaded**: no routes, no menu entries, no prompt injection; the file stays untouched and works again once re-enabled.
-- **Deleting a workspace / session**: the matching block is dropped on the next read.
-- **Uninstalling**: DSH does not call back into the plugin, so the file stays under `plugin-data/dsh-session-rules/`; delete that directory yourself if you don't want it.
+**Applying**: "Save" takes effect from the **next turn**. Saving an empty box turns injection off.
 
-## Permissions and footprint
+**Polish draft**: hands your rough notes to the model this session already uses. It never overwrites silently — the popup shows "original / rewritten" side by side and only "replace original" applies it. If the model is unavailable the button just reports an error; typing by hand keeps working.
 
-| Touches | What for | Where |
-| --- | --- | --- |
-| System prompt | Adds a `session-rules` section (order 10190, no interpolation). **Only injected for sessions that ticked the switches**; otherwise stored but never sent | Harness `systemPrompt` service |
-| Plugin data (the only file it writes) | Rules text, switches, per-level ticks; stale blocks are dropped on read | `$DSH_HOME/plugin-data/dsh-session-rules/rules.json` |
-| Workspace list (read-only) | Real paths, titles, member sessions — used to derive the hierarchy | `$DSH_HOME/storages/workspace.json` |
-| Sessions tree (read-only) | Which workspace a session belongs to, and whether it still exists | `$DSH_HOME/sessions/**` |
-| Local HTTP route | Popup read/write: `GET/POST /__chameleon/session/rules` on Harness's own web server | Local, same origin |
-| Model call | Only on "polish draft", through the provider/model Harness is configured with — no direct external API | Harness `llm` service |
-| UI | Session-row menu item, workspace-rules dialog, one DOM-enhanced item in the workspace `⋯` menu, one injected stylesheet | Harness sidebar / overlay |
+## Token cost
 
-It never modifies Harness's app files or any project file, and makes no network calls other than Harness's own model service.
+- Once ticked, the text is part of **every** turn's request for that session. Untick it and nothing is sent — the text simply stays on disk.
+- Workspace rules accumulate by level: three ticked levels means three blocks in the prompt. Long rules cost the same way. Tick only what a session actually needs.
 
-## Safety and boundaries
+## Where the data lives
 
-- The plugin does exactly one thing: workspace and session rules. It ships no sample rules, carries no user content, reports nothing anywhere, and the repo contains no user rules or machine paths.
-- It never modifies Harness's app files or any project file (`AGENTS.md` is injected by Harness itself; the plugin does not read it).
-- Injected text goes in verbatim — no `{{variable}}` interpolation.
-- The HTTP route rejects unauthenticated requests through `connection.requestRejection`, like every other Harness plugin.
+- `~/.dsh/plugin-data/dsh-session-rules/rules.json` (`DSH_HOME` overrides the root).
+- It belongs to this plugin alone; upgrading the plugin keeps it; copying it to another machine carries your rules over.
+- Disabling the plugin removes the menu entries and stops all injection; the file stays untouched.
+- Deleting a workspace or a session drops its block on the next read.
+- Uninstalling leaves the file under `plugin-data/dsh-session-rules/`; delete that folder yourself if you don't want it.
+
+## Boundaries
+
+- It only reads and writes that one file — never Harness's app files, never anything in your project.
+- No sample rules shipped, no user content carried, nothing reported anywhere.
+- The only network activity is "Polish draft" calling the model service Harness is configured with.
 - One block is capped at 100 K characters.
+- The workspace-row `⋯` menu has no official extension slot in DSH, so that item is added by DOM enhancement (reusing the built-in item's style and keyboard behaviour). It may break when DSH reshapes its sidebar.
 
-## Development
-
-TypeScript in `src/`, `tsc` emits `dist/`. npm or pnpm:
-
-```bash
-npm install && npm run build   # or pnpm install && pnpm build
-npm test                        # build + self-check: id normalisation, store I/O, injection
-```
-
-- `src/index.ts`: host side. Registers the `systemPrompt` section (rules resolved per session on each assembly) and one exact `webServer` route.
-- `src/client.ts`: browser side. A classic script emitted by `tsc` (the `__ModuleLoader__` factory), no bundler; sidebar menu items and the two dialogs.
-- `tsconfig.json`: mirrors the `dsh-app-packager` plugin (ES2022 / nodenext / declaration).
-- `cordis.patch.yml`: the plugin row inserted when installed as a bundle.
-
-Installing from git requires `npm run build` (or `pnpm build`) first, because `dsh plugin add` on a directory uses `dist/`.
+Install details, permissions and internals: [docs/DEVELOPING.md](docs/DEVELOPING.md).
 
 ## License
 
