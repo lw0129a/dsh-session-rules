@@ -140,12 +140,13 @@ function workspaceRegistry() {
   const table = parsed?.tables?.workspaces
   if (table === null || typeof table !== 'object') return []
   const byPath = new Map()
-  for (const value of Object.values(table)) {
+  for (const [workspaceId, value] of Object.entries(table)) {
     if (value === null || typeof value !== 'object') continue
     const item = value as any
     const workspacePath = typeof item.path === 'string' ? item.path.trim() : ''
     if (workspacePath === '' || byPath.has(workspacePath)) continue
     byPath.set(workspacePath, {
+      id: workspaceId,
       path: workspacePath,
       title:
         typeof item.title === 'string' && item.title !== '' ? item.title : path.basename(workspacePath),
@@ -478,6 +479,7 @@ async function handleRequest(ctx, req, res) {
         workspaces: knownWorkspaces().map((item) => {
           const entry = workspaceEntryOf(store, item.path)
           return {
+            id: item.id ?? '',
             path: item.path,
             title: item.title,
             rules: entry.rules,

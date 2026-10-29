@@ -954,13 +954,19 @@
       svg.setAttribute('height', '16')
       svg.setAttribute('viewBox', '0 0 16 16')
       svg.setAttribute('fill', 'none')
+      svg.setAttribute('stroke', 'currentColor')
+      svg.setAttribute('stroke-width', '1.5')
+      svg.setAttribute('stroke-linecap', 'round')
+      svg.setAttribute('stroke-linejoin', 'round')
       svg.setAttribute('aria-hidden', 'true')
-      const line = doc.createElementNS(ns, 'path')
-      line.setAttribute('d', 'M4.25 2.75h5l3 3v7.5h-8v-10.5Zm5 0v3h3M5.75 8h5M5.75 10.5h5')
-      line.setAttribute('stroke', 'currentColor')
-      line.setAttribute('stroke-width', '1.25')
-      line.setAttribute('stroke-linejoin', 'round')
-      svg.appendChild(line)
+      for (const d of [
+        'M8 1.6 13 3.5v4.1c0 3.1-2.1 5.6-5 6.8-2.9-1.2-5-3.7-5-6.8V3.5z',
+        'm5.7 7.9 1.7 1.7 3-3.3',
+      ]) {
+        const path = doc.createElementNS(ns, 'path')
+        path.setAttribute('d', d)
+        svg.appendChild(path)
+      }
       return svg
     }
 
@@ -1017,8 +1023,9 @@
         if (row === undefined) return
         const menu = activeMenu(doc, row)
         if (menu === undefined || menu.querySelector(`[${MENU_MARKER}]`) !== null) return
-        const title = (childByClassPart(row, 'projectText')?.textContent ?? '').trim()
-        if (title === '') return
+        const rowKey = row.getAttribute('data-row-key') ?? ''
+        const workspaceId = rowKey.startsWith('workspace:') ? rowKey.slice('workspace:'.length) : ''
+        if (workspaceId === '') return
         const viewport = menu.querySelector('[role="presentation"]') ?? menu
         viewport.prepend(
           menuEntry(doc, menu, menuLabel(doc), () => {
@@ -1026,8 +1033,8 @@
               .then((res) => res.json())
               .then((body) => {
                 const list = Array.isArray(body?.workspaces) ? body.workspaces : []
-                const matches = list.filter((item) => item.title === title)
-                if (matches.length === 1) onPick(matches[0].path)
+                const match = list.find((item) => item.id === workspaceId)
+                if (match !== undefined) onPick(match.path)
               })
               .catch(() => {})
               .finally(() => closeMenu(doc))
