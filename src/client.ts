@@ -26,6 +26,21 @@
     const DIALOG_ID = 'session-rules.dialog'
     const ENTRY_ID = 'session-rules.workspace-entry'
     const ENDPOINT = '/__chameleon/session/rules'
+    // The workspace "..." menu has no extension slot, so a DOM enhancer adds one
+    // entry to it; the click lands here and the footer dialog opens on that
+    // workspace.
+    const workspacePicker = (function () {
+      const listeners: any = new Set()
+      return {
+        subscribe(listener) {
+          listeners.add(listener)
+          return () => listeners.delete(listener)
+        },
+        pick(workspacePath) {
+          for (const listener of listeners) listener(workspacePath)
+        },
+      }
+    })()
     const NS = 'session-rules'
 
     const ZH = {
@@ -69,6 +84,7 @@
       'dialog.inheritShared': '对本会话启用工作区守则（默认关闭）',
       'dialog.sharedEditHint': '要改这些内容，用侧边栏底部的「工作区守则」。',
       'entry.label': '工作区守则',
+      'menu.workspace': '会话守则',
       'entry.title': '按下层→上层为每个工作区维护守则',
       'ws.title': '工作区守则',
       'ws.hint': '每个工作区可以写一份守则；子工作区只能勾选是否沿用上层，不能改上层内容。会话里默认不带入，需要各自勾选启用。',
@@ -128,6 +144,7 @@
       'dialog.inheritShared': 'Apply the workspace rules to this session (off by default)',
       'dialog.sharedEditHint': 'Edit them from “Workspace rules” at the bottom of the sidebar.',
       'entry.label': 'Workspace rules',
+      'menu.workspace': 'Session rules',
       'entry.title': 'Rules per workspace, innermost first',
       'ws.title': 'Workspace rules',
       'ws.hint': 'Each workspace keeps its own rules; a child workspace can only opt into its ancestors, never edit them. Sessions do not inherit anything until they tick the box.',
@@ -689,6 +706,7 @@
     function WorkspaceDialog(props) {
       const seat = props.seat
       const t = (key) => resolveText(seat, key)
+      const desired = typeof props.initialPath === 'string' ? props.initialPath : ''
       const [items, setItems] = React.useState(null)
       const [selected, setSelected] = React.useState('')
       const [rules, setRules] = React.useState('')
@@ -717,7 +735,8 @@
             if (!body || body.ok !== true) throw new Error(body?.error ?? 'invalid response')
             const list = Array.isArray(body.workspaces) ? body.workspaces : []
             setItems(list)
-            if (list.length > 0) pickFrom(list, list[0].path)
+            const wanted = list.some((item) => item.path === desired) ? desired : list[0]?.path
+            if (wanted !== undefined) pickFrom(list, wanted)
           })
           .catch((cause) => {
             if (!cancelled) setError(`${t('ws.loadFailed')}: ${String(cause?.message ?? cause)}`)
@@ -894,12 +913,163 @@
       )
     }
 
+    // --- workspace "..." menu enhancer --------------------------------------
+    // The workspace row menu is hard-coded in DSH and has no extension slot, so
+    // this marks it up in the DOM once it opens, cloning the built-in item
+    // markup so styling and keyboard behaviour stay native.
+    const MENU_MARKER = 'data-session-rules-workspace-menu'
+
+    function isDomElement(node: any): node is Element {
+      return typeof Element !== 'undefined' && node instanceof Element
+    }
+
+    function childByClassPart(node: any, part: string): any {
+      return Array.from(node.children as ArrayLike<any>).find(
+        (child) => isDomElement(child) && Array.from(child.classList).some((name) => name.indexOf(part) >= 0),
+      )
+    }
+
+    function workspaceRows(doc: any): any[] {
+      return Array.from(doc.querySelectorAll('[role="treeitem"][aria-expanded]')).filter(
+        (row) => childByClassPart(row, 'projectText') !== undefined,
+      )
+    }
+
+    function activeMenu(doc: any, row: any): any {
+      const button = childByClassPart(row, 'rowActions')?.querySelector('button[aria-label]')
+      if (button === undefined || button === null) return undefined
+      const box = button.getBoundingClientRect()
+      let best: any
+      for (const menu of Array.from(doc.querySelectorAll('[role="menu"]')) as any[]) {
+        if (menu.querySelector('[role="menuitem"]') === null) continue
+        const style = doc.defaultView?.getComputedStyle(menu)
+        if (style !== undefined && (style.display === 'none' || style.visibility === 'hidden')) continue
+        const rect = menu.getBoundingClientRect()
+        const distance = Math.abs(rect.left - box.left) + Math.abs(rect.top - box.bottom)
+        if (best === undefined || distance < best.distance) best = { menu, distance }
+      }
+      return best === undefined ? undefined : best.menu
+    }
+
+    function menuIcon(doc: any): any {
+      const ns = 'http://www.w3.org/2000/svg'
+      const svg = doc.createElementNS(ns, 'svg')
+      svg.setAttribute('width', '16')
+      svg.setAttribute('height', '16')
+      svg.setAttribute('viewBox', '0 0 16 16')
+      svg.setAttribute('fill', 'none')
+      svg.setAttribute('aria-hidden', 'true')
+      const line = doc.createElementNS(ns, 'path')
+      line.setAttribute('d', 'M4.25 2.75h5l3 3v7.5h-8v-10.5Zm5 0v3h3M5.75 8h5M5.75 10.5h5')
+      line.setAttribute('stroke', 'currentColor')
+      line.setAttribute('stroke-width', '1.25')
+      line.setAttribute('stroke-linejoin', 'round')
+      svg.appendChild(line)
+      return svg
+    }
+
+    function menuEntry(doc: any, menu: any, label: string, onSelect: () => void): any {
+      const reference = menu.querySelector('[role="menuitem"]')
+      const referenceWrapper = reference === null ? null : reference.parentElement
+      const wrapper = doc.createElement(referenceWrapper === null ? 'div' : referenceWrapper.tagName.toLowerCase())
+      if (referenceWrapper !== null && referenceWrapper.className !== '') wrapper.className = referenceWrapper.className
+      wrapper.setAttribute(MENU_MARKER, 'true')
+      const button = doc.createElement('button')
+      button.type = 'button'
+      button.setAttribute('role', 'menuitem')
+      if (reference !== null && reference.className !== '') button.className = reference.className
+      const icon = doc.createElement('span')
+      const iconReference = reference === null ? null : reference.children.item(0)
+      if (isDomElement(iconReference)) icon.className = iconReference.className
+      icon.appendChild(menuIcon(doc))
+      const text = doc.createElement('span')
+      const textReference = reference === null ? null : reference.children.item(1)
+      if (isDomElement(textReference)) text.className = textReference.className
+      text.textContent = label
+      button.append(icon, text)
+      button.addEventListener('click', (event: any) => {
+        event.preventDefault()
+        event.stopPropagation()
+        onSelect()
+      })
+      wrapper.appendChild(button)
+      return wrapper
+    }
+
+    function menuLabel(doc: any): string {
+      const lang = doc?.documentElement?.getAttribute('lang') ?? ''
+      return lang.toLowerCase().startsWith('zh') ? '会话守则' : 'Session rules'
+    }
+
+    function closeMenu(doc: any): void {
+      const PointerEventCtor = doc.defaultView?.PointerEvent ?? doc.defaultView?.MouseEvent
+      if (PointerEventCtor !== undefined) doc.dispatchEvent(new PointerEventCtor('pointerdown', { bubbles: true }))
+    }
+
+    function enhanceWorkspaceMenu(doc: any, onPick: (workspacePath: string) => void): () => void {
+      if (typeof doc?.createElement !== 'function') return () => {}
+      const ObserverCtor = doc.defaultView?.MutationObserver
+      if (ObserverCtor === undefined) return () => {}
+      let scheduled = false
+      let disposed = false
+      const sync = () => {
+        scheduled = false
+        if (disposed) return
+        const row = workspaceRows(doc).find((candidate: any) =>
+          Array.from(candidate.classList as ArrayLike<string>).some((name) => name.indexOf('menuOpen') >= 0),
+        )
+        if (row === undefined) return
+        const menu = activeMenu(doc, row)
+        if (menu === undefined || menu.querySelector(`[${MENU_MARKER}]`) !== null) return
+        const title = (childByClassPart(row, 'projectText')?.textContent ?? '').trim()
+        if (title === '') return
+        const viewport = menu.querySelector('[role="presentation"]') ?? menu
+        viewport.prepend(
+          menuEntry(doc, menu, menuLabel(doc), () => {
+            fetch(`${ENDPOINT}?workspaces=1`, { credentials: 'same-origin' })
+              .then((res) => res.json())
+              .then((body) => {
+                const list = Array.isArray(body?.workspaces) ? body.workspaces : []
+                const matches = list.filter((item) => item.title === title)
+                if (matches.length === 1) onPick(matches[0].path)
+              })
+              .catch(() => {})
+              .finally(() => closeMenu(doc))
+          }),
+        )
+      }
+      const schedule = () => {
+        if (scheduled || disposed) return
+        scheduled = true
+        queueMicrotask(sync)
+      }
+      const observer = new ObserverCtor(schedule)
+      observer.observe(doc.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] })
+      doc.addEventListener('click', schedule, true)
+      schedule()
+      return () => {
+        disposed = true
+        observer.disconnect()
+        doc.removeEventListener('click', schedule, true)
+        Array.from(doc.querySelectorAll(`[${MENU_MARKER}]`) as any[]).forEach((entry) => entry.remove())
+      }
+    }
+
     // Footer seat: a plain list slot, so this never collides with the built-in
     // workspace browser (a `single` slot) or its hard-coded "..." menu.
     function WorkspaceEntry(props) {
       const seat = seatOf(props)
       const [open, setOpen] = React.useState(false)
+      const [initialPath, setInitialPath] = React.useState('')
       const t = (key) => resolveText(seat, key)
+      React.useEffect(
+        () =>
+          workspacePicker.subscribe((workspacePath) => {
+            setInitialPath(workspacePath)
+            setOpen(true)
+          }),
+        [],
+      )
       return h(
         React.Fragment,
         null,
@@ -908,7 +1078,7 @@
           { variant: 'outline', size: 'sm', title: t('entry.title'), onClick: () => setOpen(true) },
           t('entry.label'),
         ),
-        open ? h(WorkspaceDialog, { seat, onClose: () => setOpen(false) }) : null,
+        open ? h(WorkspaceDialog, { seat, initialPath, onClose: () => setOpen(false) }) : null,
       )
     }
 
@@ -943,6 +1113,9 @@
         ctx.slots.inject(OVERLAY_SLOT, () =>
           ctx.slots.register({ name: OVERLAY_SLOT, id: DIALOG_ID, order: 100, locale: NS }, DialogHost),
         )
+        if (typeof document !== 'undefined') {
+          enhanceWorkspaceMenu(document, (workspacePath) => workspacePicker.pick(workspacePath))
+        }
       },
     }
   },
