@@ -1,6 +1,7 @@
 export declare const name = "dsh-session-rules";
 export declare const inject: string[];
 declare function readStore(): any;
+declare function reclaimStore(): boolean;
 declare function entryOf(store: any, sessionId: any): {
     rules: any;
     sources: any;
@@ -25,6 +26,7 @@ declare function optimizeRules(ctx: any, text: any): Promise<string>;
 declare function handleRequest(ctx: any, req: any, res: any): Promise<void>;
 export declare function apply(ctx: any): void;
 export declare const __test: {
+    reclaimStore: typeof reclaimStore;
     dedupeLines: typeof dedupeLines;
     handleRequest: typeof handleRequest;
     readStore: typeof readStore;

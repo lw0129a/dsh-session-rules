@@ -9,7 +9,7 @@ const home = mkdtempSync(path.join(tmpdir(), 'dsh-session-rules-'))
 process.env.DSH_HOME = home
 
 const { __test } = await import('../dist/index.js')
-const { rulesFor, entryOf, idCandidates, workspaceOf, ancestorsOf, knownWorkspaces, handleRequest, readStore, apply } = __test
+const { rulesFor, entryOf, idCandidates, workspaceOf, ancestorsOf, knownWorkspaces, handleRequest, readStore, apply, reclaimStore } = __test
 
 // The editor's list helpers live in the browser bundle, so pull their source
 // out and exercise it: markers continue themselves, ordered markers count up,
@@ -426,5 +426,28 @@ assert.deepEqual(
 assert.equal(path.join(storeDir, 'rules.json'), path.join(home, 'plugin-data', 'dsh-session-rules', 'rules.json'))
 assert.ok(existsSync(path.join(storeDir, 'rules.json')))
 
+// Reinstall vs upgrade. The marker lives inside the installed package, so a
+// reinstall loses it; `install.json` remembers the version that last ran.
+const repoRoot = path.resolve(import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname), '..')
+const marker = path.join(repoRoot, '.install-marker')
+const seen = path.join(home, 'plugin-data', 'dsh-session-rules', 'install.json')
+const version = JSON.parse(readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).version
+const writeSeen = (value) => {
+  mkdirSync(path.dirname(seen), { recursive: true })
+  writeFileSync(seen, `${JSON.stringify({ version: value })}\n`, 'utf8')
+}
+
+rmSync(marker, { force: true })
+writeSeen('0.0.1-older')
+assert.equal(reclaimStore(), false, 'a version bump is an upgrade: keep the rules')
+assert.ok(existsSync(marker), 'activation marks the install')
+
+writeSeen(version)
+assert.equal(reclaimStore(), false, 'the marker is back, so this install is unchanged')
+
+rmSync(marker, { force: true })
+assert.equal(reclaimStore(), true, 'same version after the package was removed: a reinstall')
+
+rmSync(marker, { force: true })
 rmSync(home, { recursive: true, force: true })
 console.log('selfcheck ok')

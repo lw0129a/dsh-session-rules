@@ -14,6 +14,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync,
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export const name = 'dsh-session-rules'
 export const inject = ['systemPrompt']
@@ -114,6 +115,55 @@ function liveSessionIds() {
     }
   }
   return seen === 0 ? null : ids
+}
+
+// Where this copy of the plugin lives and which version it is. Both are needed
+// to tell a reinstall from an upgrade: see `reclaimStore`.
+function packageRoot() {
+  try {
+    return fileURLToPath(new URL('..', import.meta.url))
+  } catch {
+    return ''
+  }
+}
+
+function ownVersion() {
+  try {
+    const raw = JSON.parse(readFileSync(path.join(packageRoot(), 'package.json'), 'utf8'))
+    return typeof raw?.version === 'string' ? raw.version : ''
+  } catch {
+    return ''
+  }
+}
+
+// DSH has no uninstall hook and leaves our store alone, so the plugin has to
+// infer it: a marker written into the installed package disappears when the
+// package is removed. Missing marker + same version as last activation means
+// the user reinstalled this version → start empty. Missing marker + a different
+// version means an upgrade → keep the data.
+function reclaimStore() {
+  const root = packageRoot()
+  const version = ownVersion()
+  if (root === '' || version === '') return false
+  const marker = path.join(root, '.install-marker')
+  const seen = path.join(path.dirname(storeFile()), 'install.json')
+  let lastVersion = ''
+  if (existsSync(marker)) return false
+  try {
+    const raw = JSON.parse(readFileSync(seen, 'utf8'))
+    if (typeof raw?.version === 'string') lastVersion = raw.version
+  } catch {
+    // No record yet: a first install, nothing to reclaim.
+  }
+  try {
+    writeFileSync(marker, version, 'utf8')
+    mkdirSync(path.dirname(seen), { recursive: true })
+    writeFileSync(seen, `${JSON.stringify({ version, at: Date.now() }, null, 2)}\n`, 'utf8')
+  } catch {
+    // A read-only install cannot be marker-ed: never wipe user rules on a guess.
+    return false
+  }
+  return lastVersion === version
 }
 
 function writeStore(store) {
@@ -697,6 +747,12 @@ async function handleRequest(ctx, req, res) {
 // --- plugin entry ----------------------------------------------------------
 
 export function apply(ctx) {
+  try {
+    if (reclaimStore()) writeStore({})
+  } catch (error) {
+    warn(ctx, `store reclaim skipped: ${String(error?.message ?? error)}`)
+  }
+
   // A plugin that throws while activating fails the whole web boot, so every
   // registration is best-effort: log it and carry on with whatever loaded.
   try {
@@ -746,6 +802,7 @@ export function apply(ctx) {
 // Exposed for the self-check: the store helpers and the handler are plain
 // functions that take their dependencies explicitly.
 export const __test = {
+  reclaimStore,
   dedupeLines,
   handleRequest,
   readStore,
