@@ -82,6 +82,8 @@
       'menu.title': '会话守则',
       'dialog.title': '会话守则',
       'dialog.hint': '这里写的内容会加入本会话的系统提示词，每轮对话生效；不影响其他会话，也不改动项目文件。',
+      'dialog.listHint':
+        '回车：续一条同级别条目（空条目回车退出列表）· Tab：缩进一级 · Shift+Tab：退回一级 · 层级标记：- → 1. → (1) → a. → (a)',
       'dialog.placeholder': '例如：\n- 修改前先跑测试\n- 只改和相关功能有关的文件\n- 中文回复，少用列表',
       'dialog.optimize': '优化描述',
       'dialog.confirmTitle': '优化前请确认',
@@ -139,7 +141,6 @@
       'ws.unknown': '找不到这个工作区，可能已被删除。',
       'ws.preview': '查看内容（只读）',
       'ws.own': '本工作区守则',
-      'ws.ownPlaceholder': '例如：\n- 本工作区统一用 pnpm\n- 提交前跑 npm test',
       'ws.ancestors': '沿用上层',
       'ws.noAncestors': '没有上层工作区。',
       'ws.inheritLabel': '沿用「%s」的守则',
@@ -153,7 +154,9 @@
       'menu.title': 'Session rules',
       'dialog.title': 'Session rules',
       'dialog.hint': 'Text here is added to this conversation’s system prompt on every turn. Other sessions and project files are untouched.',
-      'dialog.placeholder': 'e.g.\n- Run the tests before changing code\n- Touch only files related to the task\n- Reply in Chinese',
+      'dialog.listHint':
+        'Enter continues the item (on an empty item it leaves the list) · Tab indents · Shift+Tab outdents · Levels: - → 1. → (1) → a. → (a)',
+      'dialog.placeholder': 'e.g.\n- Run the tests before changing code\n- Only touch files related to the task\n- Reply in Chinese, keep lists short',
       'dialog.optimize': 'Polish',
       'dialog.confirmTitle': 'Before polishing',
       'dialog.confirmBody': 'The session model rewrites the whole text. Your original stays untouched until you accept the result in the comparison view.',
@@ -210,7 +213,6 @@
       'ws.unknown': 'This workspace is gone — it may have been deleted.',
       'ws.preview': 'Show content (read only)',
       'ws.own': 'Rules for this workspace',
-      'ws.ownPlaceholder': 'e.g.\n- This workspace uses pnpm\n- Run the tests before committing',
       'ws.ancestors': 'Inherited from',
       'ws.noAncestors': 'No parent workspace.',
       'ws.inheritLabel': 'Inherit “%s”',
@@ -340,33 +342,165 @@
       resize: 'vertical',
     }
 
-    // Every non-empty line is a rule bullet: "- " is added as you type and
-    // cannot be deleted (deleting it just re-adds it). Lines you leave blank
-    // stay blank so the text can be grouped.
-    const BULLET = '- '
-    function normalizeBullets(text) {
-      const lines = text.split('\n').map((line) => {
-        const bare = line.replace(/^[\s-]*/, '').replace(/\s+$/, '')
-        return bare === '' ? '' : `${BULLET}${bare}`
-      })
-      return lines.join('\n')
+    // Markdown-style list editing, the way Typora does it: whatever marker the
+    // author typed is what continues, Enter on an empty item leaves the list,
+    // and Tab / Shift+Tab shift the line two spaces per level. Nothing is
+    // rewritten behind the user's back.
+    const LIST_ITEM = /^(\s*)([-*+]|\d+[.)]|\(\d+\)|[a-z][.)]|\([a-z]\))(\s+)(.*)$/i
+    const INDENT = '  '
+
+    function nextMarker(marker) {
+      const parenNumber = /^\((\d+)\)$/.exec(marker)
+      if (parenNumber !== null) return `(${Number(parenNumber[1]) + 1})`
+      const dottedNumber = /^(\d+)([.)])$/.exec(marker)
+      if (dottedNumber !== null) return `${Number(dottedNumber[1]) + 1}${dottedNumber[2]}`
+      const parenLetter = /^\(([a-z])\)$/i.exec(marker)
+      if (parenLetter !== null) return `(${nextLetter(parenLetter[1])})`
+      const dottedLetter = /^([a-z])([.)])$/i.exec(marker)
+      if (dottedLetter !== null) return `${nextLetter(dottedLetter[1])}${dottedLetter[2]}`
+      return marker
     }
 
-    function withBulletCaret(target) {
+    function nextLetter(letter) {
+      const lower = letter === letter.toLowerCase()
+      const code = letter.toLowerCase().charCodeAt(0)
+      const next = code >= 122 ? 97 : code + 1
+      return String.fromCharCode(lower ? next : next - 32)
+    }
+
+    // The text to insert after Enter, or '' when the item is being closed.
+    function listContinuation(line) {
+      const match = LIST_ITEM.exec(line)
+      if (match === null) return ''
+      if (match[4].trim() === '') return ''
+      return `${match[1]}${nextMarker(match[2])}${match[3]}`
+    }
+
+    // Depth decides the marker style, mirroring how the guide describes it:
+    // level 1 is "- ", level 2 is "1. ", level 3 is "(1) ". Enter continues the
+    // level you are on; Tab is what moves the line between levels.
+    const MARKERS_BY_DEPTH = ['- ', '1. ', '(1) ', 'a. ', '(a) ']
+
+    function markerAtDepth(depth, gap) {
+      const marker = MARKERS_BY_DEPTH[Math.min(depth, MARKERS_BY_DEPTH.length - 1)]
+      return `${marker.trimEnd()}${gap}`
+    }
+
+    function indentLine(line, shift) {
+      const match = LIST_ITEM.exec(line)
+      if (match === null) {
+        return shift < 0 ? line.replace(/^ {0,2}/, '') : `${INDENT}${line}`
+      }
+      const spaces = shift < 0 ? Math.max(0, match[1].length - INDENT.length) : match[1].length + INDENT.length
+      return `${' '.repeat(spaces)}${markerAtDepth(Math.floor(spaces / INDENT.length), match[3])}${match[4]}`
+    }
+
+    // Undo / redo for the rule text: one snapshot per edit burst, so a whole
+    // burst of typing undoes at once instead of one character at a time.
+    function createHistory(initial) {
+      return { past: [], future: [], current: initial, stamp: 0 }
+    }
+
+    function sharedPrefixLength(left, right) {
+      const limit = Math.min(left.length, right.length)
+      let index = 0
+      while (index < limit && left[index] === right[index]) index += 1
+      return index
+    }
+
+    function historyRecord(history, value) {
+      if (value === history.current) return
+      const now = Date.now()
+      const small = Math.abs(value.length - history.current.length) <= 40
+      const burst = small && now - history.stamp < 700 && sharedPrefixLength(value, history.current) >= Math.min(value.length, history.current.length) - 40
+      if (!burst) {
+        history.past.push(history.current)
+        if (history.past.length > 300) history.past.shift()
+      }
+      history.current = value
+      history.stamp = now
+      history.future.length = 0
+    }
+
+    function historyUndo(history) {
+      if (history.past.length === 0) return undefined
+      history.future.push(history.current)
+      history.current = history.past.pop()
+      history.stamp = 0
+      return history.current
+    }
+
+    function historyRedo(history) {
+      if (history.future.length === 0) return undefined
+      history.past.push(history.current)
+      history.current = history.future.pop()
+      history.stamp = 0
+      return history.current
+    }
+
+    // Cmd on macOS, Ctrl elsewhere: Cmd/Ctrl+Z undoes, Shift+Cmd/Ctrl+Z redoes,
+    // and Windows also accepts the traditional Ctrl+Y.
+    function isApplePlatform() {
+      const platform = (navigator as any)?.userAgentData?.platform ?? navigator?.platform ?? ''
+      return /mac|iphone|ipad/i.test(String(platform))
+    }
+
+    function handleHistoryKeys(event, apply) {
+      const apple = isApplePlatform()
+      if (event.altKey) return
+      if (apple ? !event.metaKey : !(event.ctrlKey || event.metaKey)) return
+      const key = String(event.key).toLowerCase()
+      if (key === 'z') {
+        event.preventDefault()
+        apply(event.shiftKey ? 'redo' : 'undo')
+        return
+      }
+      if (key === 'y' && !apple) {
+        event.preventDefault()
+        apply('redo')
+      }
+    }
+
+    function editLine(target, edit) {
+      const raw = target.value
+      const start = raw.lastIndexOf('\n', (target.selectionStart ?? 0) - 1) + 1
+      const endIndex = raw.indexOf('\n', target.selectionStart ?? 0)
+      const end = endIndex < 0 ? raw.length : endIndex
+      const line = raw.slice(start, end)
+      const next = edit(line)
+      if (next === line) return
+      const caret = start + Math.max(0, (target.selectionStart ?? 0) - start + (next.length - line.length))
+      target.value = `${raw.slice(0, start)}${next}${raw.slice(end)}`
+      target.setSelectionRange(caret, caret)
+    }
+
+    function handleListKeys(event) {
+      const target = event.target
+      if (event.key === 'Tab') {
+        event.preventDefault()
+        editLine(target, (line) => indentLine(line, event.shiftKey ? -1 : 1))
+        target.dispatchEvent(new Event('input', { bubbles: true }))
+        return
+      }
+      if (event.key !== 'Enter' || event.shiftKey) return
       const raw = target.value
       const caret = target.selectionStart ?? raw.length
-      const beforeLines = raw.slice(0, caret).split('\n')
-      const lineIndex = beforeLines.length - 1
-      const oldLine = beforeLines[lineIndex]
-      const next = normalizeBullets(raw)
-      const newLine = next.split('\n')[lineIndex] ?? ''
-      const shift = newLine.length - oldLine.length
-      const position = Math.max(0, Math.min(next.length, caret + shift))
-      if (next !== raw) {
-        target.value = next
-        target.setSelectionRange(position, position)
+      if (caret !== (target.selectionEnd ?? caret)) return
+      const start = raw.lastIndexOf('\n', caret - 1) + 1
+      const line = raw.slice(start, caret)
+      const match = LIST_ITEM.exec(line)
+      if (match === null) return
+      event.preventDefault()
+      if (match[4].trim() === '') {
+        // Empty item: drop the marker and stay on this line.
+        target.value = `${raw.slice(0, start)}\n${raw.slice(caret)}`
+        target.setSelectionRange(start + 1, start + 1)
+      } else {
+        const insert = `${nextMarker(match[2])}${match[3]}`
+        target.value = `${raw.slice(0, caret)}\n${match[1]}${insert}${raw.slice(caret)}`
+        target.setSelectionRange(caret + 1 + match[1].length + insert.length, caret + 1 + match[1].length + insert.length)
       }
-      return next
+      target.dispatchEvent(new Event('input', { bubbles: true }))
     }
 
   const checkbox = (key, checked, onChange, label) =>
@@ -393,6 +527,16 @@
       h('span', null, label),
     )
 
+  const hintStyle = {
+    margin: '6px 0 0',
+    fontSize: 12,
+    lineHeight: 1.6,
+    color: 'var(--dsw-alias-text-secondary, #57606a)',
+  }
+
+  const listHint = (t) =>
+    h('p', { key: 'listHint', style: { ...hintStyle, margin: '6px 0 0' } }, `${t('dialog.listHint')} · ${t('dialog.historyHint')}`)
+
   const sectionTitle = (key, label, extra?) =>
     h(
       'p',
@@ -417,6 +561,24 @@
       const [note, setNote] = React.useState(null)
       const [review, setReview] = React.useState(null)
       const [confirmOpen, setConfirmOpen] = React.useState(false)
+      const history = React.useRef(createHistory(''))
+      const areaRef = React.useRef(null)
+
+      const applyHistory = (direction) => {
+        const next = direction === 'undo' ? historyUndo(history.current) : historyRedo(history.current)
+        if (next === undefined) return
+        setRules(next)
+        const area = areaRef.current
+        if (area !== null) {
+          area.focus()
+          area.setSelectionRange(next.length, next.length)
+        }
+      }
+
+      const editRules = (value) => {
+        setRules(value)
+        historyRecord(history.current, value)
+      }
 
       React.useEffect(() => {
         let cancelled = false
@@ -431,7 +593,9 @@
           .then((body) => {
             if (cancelled) return
             if (!body || body.ok !== true) throw new Error(body?.error ?? 'invalid response')
-            setRules(typeof body.rules === 'string' ? body.rules : '')
+            const loaded = typeof body.rules === 'string' ? body.rules : ''
+            setRules(loaded)
+            history.current = createHistory(loaded)
             setSources(Array.isArray(body.sources) ? body.sources : [])
             setEnabled(body.enabled === true)
             setInherit(Array.isArray(body.inherit) ? body.inherit : [])
@@ -478,7 +642,7 @@
           })
           const body = await res.json()
           if (!body || body.ok !== true) throw new Error(t('dialog.optimizeFailed'))
-          const candidate = normalizeBullets(String(body.rules ?? '')).trim()
+          const candidate = String(body.rules ?? '').trim()
           if (candidate === '') throw new Error(t('dialog.candidateEmpty'))
           setReview({ original: rules, candidate })
         } catch (cause) {
@@ -538,7 +702,7 @@
             rows: 8,
             onChange: editable
               ? (event) => {
-                  const next = normalizeBullets(event.target.value)
+                  const next = event.target.value
                   setReview((previous) => (previous === null ? previous : { ...previous, candidate: next }))
                 }
               : undefined,
@@ -640,13 +804,19 @@
         checkbox('toggle', enabled, setEnabled, t('dialog.enabled')),
         h('textarea', {
           key: 'editor',
+          ref: areaRef,
           value: rules,
           placeholder: t('dialog.placeholder'),
           spellCheck: false,
           rows: 12,
-          onChange: (event) => setRules(withBulletCaret(event.target)),
+          onKeyDown: (event) => {
+            handleListKeys(event)
+            handleHistoryKeys(event, applyHistory)
+          },
+          onChange: (event) => editRules(event.target.value),
           style: textareaStyle,
         }),
+        listHint(t),
         sharedBlock,
       ].filter((item) => item !== null)
       if (sources.length > 0) {
@@ -669,7 +839,7 @@
                   variant: 'outline',
                   size: 'sm',
                   onClick: () => {
-                    setRules(review.candidate)
+                    editRules(review.candidate)
                     setReview(null)
                     setNote(t('dialog.optimized'))
                     setError(null)
@@ -769,6 +939,24 @@
       const [busy, setBusy] = React.useState(false)
       const [error, setError] = React.useState(null)
       const [note, setNote] = React.useState(null)
+      const history = React.useRef(createHistory(''))
+      const areaRef = React.useRef(null)
+
+      const applyHistory = (direction) => {
+        const next = direction === 'undo' ? historyUndo(history.current) : historyRedo(history.current)
+        if (next === undefined) return
+        setRules(next)
+        const area = areaRef.current
+        if (area !== null) {
+          area.focus()
+          area.setSelectionRange(next.length, next.length)
+        }
+      }
+
+      const editRules = (value) => {
+        setRules(value)
+        historyRecord(history.current, value)
+      }
 
       function loadInto(list, workspacePath) {
         const item = list.find((candidate) => candidate.path === workspacePath)
@@ -776,7 +964,9 @@
           setError(t('ws.unknown'))
           return
         }
-        setRules(typeof item.rules === 'string' ? item.rules : '')
+        const loaded = typeof item.rules === 'string' ? item.rules : ''
+        setRules(loaded)
+        history.current = createHistory(loaded)
         setInherit(Array.isArray(item.inherit) ? item.inherit : [])
         setError(null)
         setNote(null)
@@ -896,13 +1086,19 @@
               sectionTitle('ownTitle', t('ws.own')),
               h('textarea', {
                 key: 'ownArea',
+                ref: areaRef,
                 value: rules,
-                placeholder: t('ws.ownPlaceholder'),
+                placeholder: t('dialog.placeholder'),
                 spellCheck: false,
                 rows: 8,
-                onChange: (event) => setRules(normalizeBullets(event.target.value)),
+                onKeyDown: (event) => {
+                  handleListKeys(event)
+                  handleHistoryKeys(event, applyHistory)
+                },
+                onChange: (event) => editRules(event.target.value),
                 style: { ...textareaStyle, minHeight: 120 },
               }),
+              listHint(t),
               h(
                 'p',
                 { key: 'ancTitle', style: { ...bodyStyle, fontWeight: 600, margin: '18px 0 8px' } },

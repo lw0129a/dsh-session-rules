@@ -38,6 +38,15 @@ Restart DeepSeek Harness afterwards.
 
 **Polish draft**: hands your rough notes to the model this session already uses. It never overwrites silently — the popup shows "original / rewritten" side by side and only "replace original" applies it. If the model is unavailable the button just reports an error; typing by hand keeps working.
 
+## What the text can look like
+
+The editor behaves like a Markdown list editor (Typora style). The text is injected verbatim — the plugin neither rewrites nor parses it:
+
+- Levels go `-` → `1.` → `(1)` → `a.` → `(a)`, then `(a)` repeats; Enter continues the same level and numbers or letters count up (`a.` → `b.`).
+- Enter on an empty item leaves the list; `Tab` indents two spaces, `Shift+Tab` outdents; `⌘Z` / `Ctrl+Z` undoes, `⇧⌘Z` / `Ctrl+Y` / `Ctrl+Shift+Z` redoes.
+- Indentation, numbering, `##` headings and tables stay exactly as typed; conditional rules are just nested items.
+- How the levels are interpreted is up to the model; the plugin only concatenates the blocks in the order you wrote (workspace levels outermost first).
+
 ## Token cost
 
 - Once ticked, the text is part of **every** turn's request for that session. Untick it and nothing is sent — the text simply stays on disk.
@@ -58,6 +67,8 @@ Restart DeepSeek Harness afterwards.
 - The only network activity is "Polish draft" calling the model service Harness is configured with.
 - One block is capped at 100 K characters.
 - The workspace-row `⋯` menu has no official extension slot in DSH, so that item is added by DOM enhancement (reusing the built-in item's style and keyboard behaviour). It may break when DSH reshapes its sidebar.
+
+Works on macOS, Linux and Windows: rules are keyed by the workspace's absolute path and the hierarchy is derived from the path relation, not from one platform's spelling.
 
 Install details, permissions and internals: [docs/DEVELOPING.md](docs/DEVELOPING.md).
 

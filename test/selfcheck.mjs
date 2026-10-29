@@ -11,6 +11,84 @@ process.env.DSH_HOME = home
 const { __test } = await import('../dist/index.js')
 const { rulesFor, entryOf, idCandidates, workspaceOf, ancestorsOf, knownWorkspaces, handleRequest, readStore } = __test
 
+// The editor's list helpers live in the browser bundle, so pull their source
+// out and exercise it: markers continue themselves, ordered markers count up,
+// Enter on an empty item closes the list, Tab shifts two spaces per level.
+function sourceOf(name) {
+  const source = readFileSync(new URL('../src/client.ts', import.meta.url), 'utf8')
+  const start = source.indexOf(`function ${name}(`)
+  assert.ok(start >= 0, `${name} exists`)
+  let depth = 0
+  let end = start
+  for (let index = source.indexOf('{', start); index < source.length; index += 1) {
+    if (source[index] === '{') depth += 1
+    else if (source[index] === '}') {
+      depth -= 1
+      if (depth === 0) {
+        end = index + 1
+        break
+      }
+    }
+  }
+  return source.slice(start, end)
+}
+
+const clientSource = readFileSync(new URL('../src/client.ts', import.meta.url), 'utf8')
+const listItemLine = [
+  'const LIST_ITEM =',
+  'const MARKERS_BY_DEPTH =',
+].map((needle) =>
+  clientSource.slice(clientSource.indexOf(needle), clientSource.indexOf('\n', clientSource.indexOf(needle))),
+).join('\n')
+const { listContinuation, indentLine } = new Function(`
+  const INDENT = '  '
+  ${listItemLine}
+  ${sourceOf('nextMarker')}
+  ${sourceOf('nextLetter')}
+  ${sourceOf('listContinuation')}
+  ${sourceOf('markerAtDepth')}
+  ${sourceOf('indentLine')}
+  return { listContinuation, indentLine }
+`)()
+
+assert.equal(listContinuation('- 需要编写样式'), '- ')
+assert.equal(listContinuation('  1) 使用 tailwind-utils 原子类'), '  2) ')
+assert.equal(listContinuation('(1) 禁止 <style>'), '(2) ')
+assert.equal(listContinuation('1. 先跑测试'), '2. ')
+assert.equal(listContinuation('a. 第三层'), 'b. ')
+assert.equal(listContinuation('(z) 最后一项'), '(a) ')
+assert.equal(listContinuation('- '), '')
+assert.equal(listContinuation('普通段落'), '')
+assert.equal(indentLine('- 需要编写样式', 1), '  1. 需要编写样式')
+assert.equal(indentLine('  1. 使用原子类', 1), '    (1) 使用原子类')
+assert.equal(indentLine('    (1) 禁止 <style>', -1), '  1. 禁止 <style>')
+assert.equal(indentLine('  1. 使用原子类', -1), '- 使用原子类')
+assert.equal(indentLine('    (1) 三级', 1), '      a. 三级')
+assert.equal(indentLine('      a. 四级', 1), '        (a) 四级')
+assert.equal(indentLine('        (a) 五级', 1), '          (a) 五级', 'past level five the marker repeats')
+assert.equal(indentLine('普通段落', 1), '  普通段落')
+
+// Undo / redo: one snapshot per burst, so a run of typing undoes in one step.
+const { createHistory, historyRecord, historyUndo, historyRedo } = new Function(`
+  ${sourceOf('createHistory')}
+  ${sourceOf('sharedPrefixLength')}
+  ${sourceOf('historyRecord')}
+  ${sourceOf('historyUndo')}
+  ${sourceOf('historyRedo')}
+  return { createHistory, historyRecord, historyUndo, historyRedo }
+`)()
+const history = createHistory('')
+historyRecord(history, 'a')
+historyRecord(history, 'ab')
+historyRecord(history, 'abc')
+assert.equal(history.past.length, 1, 'a typing burst is one snapshot (the empty start)')
+assert.equal(historyUndo(history), '', 'a typing burst undoes as one step')
+assert.equal(historyRedo(history), 'abc')
+historyRecord(history, 'abc\n- 另一条')
+assert.equal(historyUndo(history), 'abc')
+assert.equal(historyRedo(history), 'abc\n- 另一条')
+assert.equal(historyRedo(history), undefined)
+
 // Session ids reach us as `session-<uuid>` in the client and at prompt
 // assembly; the store must find either spelling.
 assert.deepEqual(idCandidates('session-abc'), ['session-abc', 'abc'])
@@ -249,6 +327,14 @@ writeFileSync(
 )
 assert.deepEqual(knownWorkspaces().map((item) => item.path), ['/tmp/ws-parent/app'])
 assert.deepEqual(ancestorsOf('/tmp/ws-parent/app').map((item) => item.path), [])
+
+// Nesting is decided by the path relation, not by string prefixes: a deeper
+// directory under a registered workspace is its child, duplicate slashes still
+// resolve to the same workspace, and a sibling with a longer name is not a
+// parent. Same rule carries the Windows separator.
+assert.deepEqual(ancestorsOf('/tmp/ws-parent/app/deep').map((item) => item.path), ['/tmp/ws-parent/app'])
+assert.deepEqual(ancestorsOf('/tmp/ws-parent//app').map((item) => item.path), [])
+assert.deepEqual(ancestorsOf('/tmp/ws-parent/app2').map((item) => item.path), [])
 
 // Deleting a workspace or a session drops its block on the next read.
 writeFileSync(

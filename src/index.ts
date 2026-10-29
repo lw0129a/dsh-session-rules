@@ -74,12 +74,13 @@ function readStore() {
 // Runs whenever the store is reloaded, so deletions need no event from DSH. An empty registry
 // or an unreadable sessions tree means "cannot tell yet", never "all gone".
 function pruneStore(store) {
-  const workspacePaths = new Set(workspaceRegistry().map((item) => item.path))
+  const workspacePaths = workspaceRegistry().map((item) => item.path)
   const live = liveSessionIds()
   let changed = false
   for (const key of Object.keys(store)) {
     if (key.startsWith('ws:')) {
-      if (workspacePaths.size > 0 && !workspacePaths.has(key.slice(3))) {
+      const stored = normalizeWorkspacePath(key.slice(3))
+      if (workspacePaths.length > 0 && !workspacePaths.some((item) => samePath(item, stored))) {
         delete store[key]
         changed = true
       }
@@ -182,7 +183,7 @@ function workspaceRegistry() {
   for (const [workspaceId, value] of Object.entries(table)) {
     if (value === null || typeof value !== 'object') continue
     const item = value as any
-    const workspacePath = typeof item.path === 'string' ? item.path.trim() : ''
+    const workspacePath = normalizeWorkspacePath(typeof item.path === 'string' ? item.path : '')
     if (workspacePath === '' || byPath.has(workspacePath)) continue
     byPath.set(workspacePath, {
       id: workspaceId,
@@ -201,8 +202,32 @@ function workspaceRegistry() {
   return registryCache.list
 }
 
+// Workspace identity is an absolute path, so it has to survive Windows as well
+// as POSIX: resolve it, drop a trailing separator, and compare case-insensitively
+// where the filesystem does (path.relative already knows).
+const CASE_INSENSITIVE_FS = process.platform === 'win32'
+
+function normalizeWorkspacePath(input) {
+  const trimmed = typeof input === 'string' ? input.trim() : ''
+  if (trimmed === '') return ''
+  const resolved = path.resolve(trimmed)
+  const root = path.parse(resolved).root
+  return resolved.length > root.length ? resolved.replace(/[\\/]+$/, '') : resolved
+}
+
+function samePath(left, right) {
+  if (left === right) return true
+  return CASE_INSENSITIVE_FS && left.toLowerCase() === right.toLowerCase()
+}
+
+function isInsideWorkspace(parent, child) {
+  if (samePath(parent, child)) return false
+  const relative = path.relative(parent, child)
+  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative)
+}
+
 function workspaceKey(workspacePath) {
-  return `ws:${workspacePath}`
+  return `ws:${normalizeWorkspacePath(workspacePath)}`
 }
 
 function workspaceEntryOf(store, workspacePath) {
@@ -216,12 +241,9 @@ function knownWorkspaces() {
 }
 
 function ancestorsOf(workspacePath) {
+  const target = normalizeWorkspacePath(workspacePath)
   return knownWorkspaces()
-    .filter(
-      (item) =>
-        item.path !== workspacePath &&
-        workspacePath.startsWith(item.path.endsWith('/') ? item.path : `${item.path}/`),
-    )
+    .filter((item) => isInsideWorkspace(item.path, target))
     .sort((left, right) => left.path.length - right.path.length)
 }
 
@@ -360,7 +382,12 @@ function rejectUnauthenticated(ctx, req) {
 // --- project guideline discovery (read-only) -------------------------------
 
 function decodeWorkspace(encoded) {
-  const attempts = [`/${encoded.replace(/^-/, '').replaceAll('-', '/')}`, encoded.replaceAll('-', '/')]
+  const drive = /^-*([A-Za-z])-+/.exec(encoded)
+  const attempts = [
+    `/${encoded.replace(/^-/, '').replaceAll('-', '/')}`,
+    encoded.replaceAll('-', '/'),
+    ...(drive === null ? [] : [`${drive[1].toUpperCase()}:/${encoded.slice(drive[0].length).replaceAll('-', '/')}`]),
+  ]
   for (const attempt of attempts) {
     try {
       if (!existsSync(attempt) || !statSync(attempt).isDirectory()) continue
