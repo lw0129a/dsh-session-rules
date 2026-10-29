@@ -84,6 +84,7 @@
       'dialog.hint': '这里写的内容会加入本会话的系统提示词，每轮对话生效；不影响其他会话，也不改动项目文件。',
       'dialog.listHint':
         '回车：续一条同级别条目（空条目回车退出列表）· Tab：缩进一级 · Shift+Tab：退回一级 · 层级标记：- → 1. → (1) → a. → (a)',
+      'dialog.historyHint': '撤销 %s · 重做 %s',
       'dialog.placeholder': '例如：\n- 修改前先跑测试\n- 只改和相关功能有关的文件\n- 中文回复，少用列表',
       'dialog.optimize': '优化描述',
       'dialog.confirmTitle': '优化前请确认',
@@ -156,6 +157,7 @@
       'dialog.hint': 'Text here is added to this conversation’s system prompt on every turn. Other sessions and project files are untouched.',
       'dialog.listHint':
         'Enter continues the item (on an empty item it leaves the list) · Tab indents · Shift+Tab outdents · Levels: - → 1. → (1) → a. → (a)',
+      'dialog.historyHint': 'Undo %s / Redo %s',
       'dialog.placeholder': 'e.g.\n- Run the tests before changing code\n- Only touch files related to the task\n- Reply in Chinese, keep lists short',
       'dialog.optimize': 'Polish',
       'dialog.confirmTitle': 'Before polishing',
@@ -489,7 +491,16 @@
       const start = raw.lastIndexOf('\n', caret - 1) + 1
       const line = raw.slice(start, caret)
       const match = LIST_ITEM.exec(line)
-      if (match === null) return
+      if (match === null) {
+        // Plain text: Enter still starts a bullet, so no line is left without one.
+        if (line.trim() === '') return
+        event.preventDefault()
+        const insert = `${MARKERS_BY_DEPTH[0]}`
+        target.value = `${raw.slice(0, caret)}\n${insert}${raw.slice(caret)}`
+        target.setSelectionRange(caret + 1 + insert.length, caret + 1 + insert.length)
+        target.dispatchEvent(new Event('input', { bubbles: true }))
+        return
+      }
       event.preventDefault()
       if (match[4].trim() === '') {
         // Empty item: drop the marker and stay on this line.
@@ -527,6 +538,8 @@
       h('span', null, label),
     )
 
+  const undoKey = process.platform === 'darwin' ? '⌘Z' : 'Ctrl+Z'
+  const redoKey = process.platform === 'darwin' ? '⇧⌘Z' : 'Ctrl+Y'
   const hintStyle = {
     margin: '6px 0 0',
     fontSize: 12,
@@ -535,7 +548,11 @@
   }
 
   const listHint = (t) =>
-    h('p', { key: 'listHint', style: { ...hintStyle, margin: '6px 0 0' } }, `${t('dialog.listHint')} · ${t('dialog.historyHint')}`)
+    h(
+      'p',
+      { key: 'listHint', style: { ...hintStyle, margin: '6px 0 0' } },
+      `${t('dialog.listHint')} · ${t('dialog.historyHint').replace('%s', undoKey).replace('%s', redoKey)}`,
+    )
 
   const sectionTitle = (key, label, extra?) =>
     h(
