@@ -1,7 +1,6 @@
 node_modules/
 *.tgz
 .DS_Store
-dist/
 package-lock.json
 pnpm-lock.yaml
 # Local data: never commit a user's own rules or machine paths

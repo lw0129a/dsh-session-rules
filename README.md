@@ -9,15 +9,10 @@
 ## 安装
 
 ```bash
-# 本地目录
-dsh plugin --profile desktop add /path/to/dsh-session-rules
-
-# 或直接从 GitHub（会自动构建）
 dsh plugin --profile desktop add github:lw0129a/dsh-session-rules
-
-# 或从 npm
-dsh plugin --profile desktop add dsh-session-rules
 ```
+
+更新走同一个地址（仓库里带了构建好的 `dist/`，装完不用再编译）。本地开发时可以用绝对路径装这个目录。
 
 装完重启 DeepSeek Harness。
 
