@@ -673,35 +673,50 @@ async function handleRequest(ctx, req, res) {
 // --- plugin entry ----------------------------------------------------------
 
 export function apply(ctx) {
-  ctx.inject(['systemPrompt'], (sub) => {
-    sub.effect(
-      () =>
-        sub.systemPrompt.section({
-          name: SECTION_NAME,
-          order: SECTION_ORDER,
-          // User text is literal: never interpolate {{name}} inside rules.
-          interpolate: false,
-          text: (context) => {
-            const agent = context?.agent
-            const sessionId = agent?.session?.id ?? agent?.id
-            return rulesFor(typeof sessionId === 'string' ? sessionId : '')
-          },
-        }),
-      'session-rules: section',
-    )
-  })
+  // A plugin that throws while activating fails the whole web boot, so every
+  // registration is best-effort: log it and carry on with whatever loaded.
+  try {
+    ctx.inject(['systemPrompt'], (sub) => {
+      sub.effect(
+        () =>
+          sub.systemPrompt.section({
+            name: SECTION_NAME,
+            order: SECTION_ORDER,
+            // User text is literal: never interpolate {{name}} inside rules.
+            interpolate: false,
+            text: (context) => {
+              try {
+                const agent = context?.agent
+                const sessionId = agent?.session?.id ?? agent?.id
+                return rulesFor(typeof sessionId === 'string' ? sessionId : '')
+              } catch {
+                // Never let a rules lookup break prompt assembly.
+                return ''
+              }
+            },
+          }),
+        'session-rules: section',
+      )
+    })
+  } catch (error) {
+    warn(ctx, `system prompt section unavailable: ${String(error?.message ?? error)}`)
+  }
 
-  ctx.inject(['webServer'], (sub) => {
-    sub.effect(
-      () =>
-        sub.webServer.register({
-          kind: 'exact',
-          path: ROUTE_PATH,
-          handler: (req, res) => handleRequest(sub, req, res),
-        }),
-      'session-rules: editor route',
-    )
-  })
+  try {
+    ctx.inject(['webServer'], (sub) => {
+      sub.effect(
+        () =>
+          sub.webServer.register({
+            kind: 'exact',
+            path: ROUTE_PATH,
+            handler: (req, res) => handleRequest(sub, req, res),
+          }),
+        'session-rules: editor route',
+      )
+    })
+  } catch (error) {
+    warn(ctx, `editor route unavailable: ${String(error?.message ?? error)}`)
+  }
 }
 
 // Exposed for the self-check: the store helpers and the handler are plain
@@ -722,4 +737,5 @@ export const __test = {
   ancestorsOf,
   workspaceForSession,
   optimizeRules,
+  apply,
 }

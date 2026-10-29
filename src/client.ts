@@ -1327,35 +1327,43 @@
       name: NS,
       inject: ['slots'],
       apply(ctx) {
-        // `sessionId` is a standard prop for every row entry; only the row
-        // owner's `useMenuOpenState` has to be contributed here.
-        ctx.slots.inject(MENU_SLOT, () =>
-          ctx.slots.register({
-            name: MENU_SLOT,
-            id: MENU_ID,
-            // Built-in rows sit at 100/200/300/400/450 (pin, rename, fork,
-            // archive, session-id) and sort ascending, so 201 puts this entry
-            // immediately under 重命名.
-            order: 201,
-            locale: NS,
-            inject: (standard, hookContext) => ({
-              hooks: {
-                menuOpenState: () => (typeof hookContext === 'function' ? hookContext : () => [false, () => {}]),
-              },
-            }),
-          }, MenuItem),
-        )
-        ctx.slots.inject(OVERLAY_SLOT, () =>
-          ctx.slots.register({ name: OVERLAY_SLOT, id: WORKSPACE_DIALOG_ID, order: 110, locale: NS }, WorkspaceHost),
-        )
-        ctx.slots.inject(OVERLAY_SLOT, () =>
-          ctx.slots.register({ name: OVERLAY_SLOT, id: DIALOG_ID, order: 100, locale: NS }, DialogHost),
-        )
-        if (typeof document !== 'undefined') {
-          ensureDialogCss()
-          enhanceWorkspaceMenu(document, {
-            workspace: (workspacePath) => workspacePicker.pick(workspacePath),
-          })
+        // A throwing client plugin can take the whole web boot down with it, so
+        // activation is best-effort: log and keep the rest of the app alive.
+        try {
+          // `sessionId` is a standard prop for every row entry; only the row
+          // owner's `useMenuOpenState` has to be contributed here.
+          ctx.slots.inject(MENU_SLOT, () =>
+            ctx.slots.register({
+              name: MENU_SLOT,
+              id: MENU_ID,
+              // Built-in rows sit at 100/200/300/400/450 (pin, rename, fork,
+              // archive, session-id) and sort ascending, so 201 puts this entry
+              // immediately under 重命名.
+              order: 201,
+              locale: NS,
+              inject: (standard, hookContext) => ({
+                hooks: {
+                  menuOpenState: () => (typeof hookContext === 'function' ? hookContext : () => [false, () => {}]),
+                },
+              }),
+            }, MenuItem),
+          )
+          ctx.slots.inject(OVERLAY_SLOT, () =>
+            ctx.slots.register({ name: OVERLAY_SLOT, id: WORKSPACE_DIALOG_ID, order: 110, locale: NS }, WorkspaceHost),
+          )
+          ctx.slots.inject(OVERLAY_SLOT, () =>
+            ctx.slots.register({ name: OVERLAY_SLOT, id: DIALOG_ID, order: 100, locale: NS }, DialogHost),
+          )
+          if (typeof document !== 'undefined') {
+            ensureDialogCss()
+            enhanceWorkspaceMenu(document, {
+              workspace: (workspacePath) => workspacePicker.pick(workspacePath),
+            })
+          }
+        } catch (error) {
+          try {
+            console.warn('[session-rules] client activation failed', error)
+          } catch {}
         }
       },
     }

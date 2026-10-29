@@ -9,7 +9,7 @@ const home = mkdtempSync(path.join(tmpdir(), 'dsh-session-rules-'))
 process.env.DSH_HOME = home
 
 const { __test } = await import('../dist/index.js')
-const { rulesFor, entryOf, idCandidates, workspaceOf, ancestorsOf, knownWorkspaces, handleRequest, readStore } = __test
+const { rulesFor, entryOf, idCandidates, workspaceOf, ancestorsOf, knownWorkspaces, handleRequest, readStore, apply } = __test
 
 // The editor's list helpers live in the browser bundle, so pull their source
 // out and exercise it: markers continue themselves, ordered markers count up,
@@ -88,6 +88,43 @@ historyRecord(history, 'abc\n- 另一条')
 assert.equal(historyUndo(history), 'abc')
 assert.equal(historyRedo(history), 'abc\n- 另一条')
 assert.equal(historyRedo(history), undefined)
+
+// Activating the plugin must never fail the whole web boot: a host that
+// refuses every service still has to leave the app running.
+assert.doesNotThrow(() =>
+  apply({
+    inject() {
+      throw new Error('no systemPrompt')
+    },
+    effect() {},
+    logger: { warn() {} },
+  }),
+)
+assert.doesNotThrow(() =>
+  apply({
+    inject() {
+      throw new Error('no webServer')
+    },
+    logger: { warn() {} },
+  }),
+)
+// A working host registers both entry points exactly once.
+{
+  const calls = []
+  apply({
+    inject(services, register) {
+      calls.push(services.join(','))
+      register({
+        systemPrompt: { section: () => ({}) },
+        webServer: { register: () => ({}) },
+        effect: (factory) => factory(),
+        logger: { warn() {} },
+      })
+    },
+    logger: { warn() {} },
+  })
+  assert.deepEqual(calls, ['systemPrompt', 'webServer'])
+}
 
 // Session ids reach us as `session-<uuid>` in the client and at prompt
 // assembly; the store must find either spelling.
