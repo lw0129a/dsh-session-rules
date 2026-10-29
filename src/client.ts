@@ -92,6 +92,8 @@
       'ws.loadFailed': '读取失败',
       'ws.saveFailed': '保存失败',
       'ws.saved': '已保存。',
+      'ws.pick': '选择工作区',
+      'ws.preview': '查看内容（只读）',
       'ws.own': '本工作区守则',
       'ws.ownPlaceholder': '例如：\n- 本工作区统一用 pnpm\n- 提交前跑 npm test',
       'ws.ancestors': '沿用上层',
@@ -152,6 +154,8 @@
       'ws.loadFailed': 'Could not load',
       'ws.saveFailed': 'Could not save',
       'ws.saved': 'Saved.',
+      'ws.pick': 'Workspace',
+      'ws.preview': 'Show content (read only)',
       'ws.own': 'Rules for this workspace',
       'ws.ownPlaceholder': 'e.g.\n- This workspace uses pnpm\n- Run the tests before committing',
       'ws.ancestors': 'Inherited from',
@@ -783,115 +787,112 @@
                 (left.ancestors?.length ?? 0) - (right.ancestors?.length ?? 0) || left.path.localeCompare(right.path),
             )
       const current = items === null ? undefined : items.find((item) => item.path === selected)
-
-      const rows = list.map((item) => {
-        const depth = Array.isArray(item.ancestors) ? item.ancestors.length : 0
-        const active = item.path === selected
-        return h(
-          'button',
-          {
-            key: item.path,
-            type: 'button',
-            onClick: () => pickFrom(items, item.path),
-            style: {
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'flex-start',
-              gap: 2,
-              width: '100%',
-              padding: '6px 8px',
-              paddingLeft: 8 + depth * 14,
-              border: 'none',
-              borderRadius: 6,
-              textAlign: 'left',
-              cursor: 'pointer',
-              font: 'inherit',
-              color: 'inherit',
-              background: active ? 'var(--dsw-alias-bg-tertiary, #eef1f4)' : 'transparent',
-            },
-          },
-          h('span', { style: { fontSize: 13, fontWeight: active ? 600 : 400 } }, item.title),
-          h('span', { style: { ...bodyStyle, fontSize: 11 } }, item.path),
-        )
-      })
-
       const ancestors = current !== undefined && Array.isArray(current.ancestors) ? current.ancestors : []
+      const detailStyle = {
+        border: '1px solid var(--dsw-alias-border-secondary, #d0d7de)',
+        borderRadius: 8,
+        padding: '10px 12px',
+        margin: '0 0 8px',
+      }
       const ancestorRows = ancestors.map((ancestor) => {
         const source = items.find((item) => item.path === ancestor.path)
         const text = source === undefined ? '' : source.rules
         return h(
           'div',
-          { key: ancestor.path, style: { margin: '0 0 10px' } },
-          checkbox(
-            `inherit:${ancestor.path}`,
-            inherit.includes(ancestor.path),
-            (checked) =>
-              setInherit((previous) =>
-                checked ? [...new Set([...previous, ancestor.path])] : previous.filter((item) => item !== ancestor.path),
-              ),
-            t('ws.inheritLabel').replace('%s', ancestor.title),
-          ),
+          { key: ancestor.path, style: detailStyle },
           h(
-            'pre',
-            {
-              style: {
-                ...textareaStyle,
-                minHeight: 0,
-                maxHeight: 120,
-                overflow: 'auto',
-                margin: '0 0 4px',
-                whiteSpace: 'pre-wrap',
-              },
-            },
-            text === '' ? t('dialog.empty') : text,
+            'label',
+            { style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', userSelect: 'none' } },
+            h('input', {
+              type: 'checkbox',
+              checked: inherit.includes(ancestor.path),
+              onChange: (event) =>
+                setInherit((previous) =>
+                  event.target.checked
+                    ? [...new Set([...previous, ancestor.path])]
+                    : previous.filter((item) => item !== ancestor.path),
+                ),
+            }),
+            h('span', null, t('ws.inheritLabel').replace('%s', ancestor.title)),
           ),
-          h('p', { key: 'own', style: { ...bodyStyle, margin: 0 } }, t('ws.readonly')),
+          text === ''
+            ? h('p', { style: { ...bodyStyle, margin: '6px 0 0' } }, t('dialog.empty'))
+            : h(
+                'details',
+                { style: { margin: '8px 0 0' } },
+                h('summary', { style: { ...bodyStyle, cursor: 'pointer', margin: 0 } }, t('ws.preview')),
+                h(
+                  'pre',
+                  {
+                    style: {
+                      ...textareaStyle,
+                      margin: '8px 0 0',
+                      minHeight: 0,
+                      maxHeight: 180,
+                      overflow: 'auto',
+                      whiteSpace: 'pre-wrap',
+                    },
+                  },
+                  text,
+                ),
+              ),
         )
       })
 
       const children = [
-        h('p', { key: 'hint', style: { ...bodyStyle, margin: '0 0 10px' } }, t('ws.hint')),
+        h('p', { key: 'hint', style: { ...bodyStyle, margin: '0 0 12px' } }, t('ws.hint')),
         items === null
           ? loading
             ? null
             : h('p', { key: 'empty', style: bodyStyle }, t('ws.empty'))
           : h(
               'div',
-              { key: 'main', style: { display: 'flex', gap: 12, alignItems: 'flex-start' } },
+              { key: 'main', style: { display: 'flex', flexDirection: 'column' } },
+              sectionTitle('pickTitle', t('ws.pick')),
               h(
-                'div',
+                'select',
                 {
-                  key: 'list',
+                  key: 'pick',
+                  value: selected,
+                  onChange: (event) => pickFrom(items, event.target.value),
                   style: {
-                    width: 210,
-                    flex: '0 0 auto',
-                    maxHeight: 340,
-                    overflow: 'auto',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 2,
-                    paddingRight: 8,
-                    borderRight: '1px solid var(--dsw-alias-border-secondary, #d0d7de)',
+                    width: '100%',
+                    padding: '6px 8px',
+                    font: 'inherit',
+                    fontSize: 13,
+                    color: 'var(--dsw-alias-text-primary, #1f2328)',
+                    background: 'var(--dsw-alias-bg-secondary, #f6f8fa)',
+                    border: '1px solid var(--dsw-alias-border-secondary, #d0d7de)',
+                    borderRadius: 6,
                   },
                 },
-                rows,
+                list.map((item) =>
+                  h(
+                    'option',
+                    { key: item.path, value: item.path },
+                    `${'\u00a0\u00a0\u00a0'.repeat(Array.isArray(item.ancestors) ? item.ancestors.length : 0)}${item.title}`,
+                  ),
+                ),
               ),
+              h('p', { key: 'pickPath', style: { ...bodyStyle, margin: '6px 0 16px', wordBreak: 'break-all' } }, selected),
+              sectionTitle('ownTitle', t('ws.own')),
+              h('textarea', {
+                key: 'ownArea',
+                value: rules,
+                placeholder: t('ws.ownPlaceholder'),
+                spellCheck: false,
+                rows: 8,
+                onChange: (event) => setRules(normalizeBullets(event.target.value)),
+                style: { ...textareaStyle, minHeight: 120 },
+              }),
               h(
-                'div',
-                { key: 'detail', style: { flex: 1, minWidth: 0 } },
-                sectionTitle('ownTitle', t('ws.own')),
-                h('textarea', {
-                  key: 'ownArea',
-                  value: rules,
-                  placeholder: t('ws.ownPlaceholder'),
-                  spellCheck: false,
-                  rows: 10,
-                  onChange: (event) => setRules(normalizeBullets(event.target.value)),
-                  style: { ...textareaStyle, minHeight: 140 },
-                }),
-                h('p', { key: 'ancTitle', style: { ...bodyStyle, fontWeight: 600, margin: '12px 0 6px' } }, t('ws.ancestors')),
-                ancestorRows.length === 0 ? h('p', { key: 'noAnc', style: bodyStyle }, t('ws.noAncestors')) : ancestorRows,
+                'p',
+                { key: 'ancTitle', style: { ...bodyStyle, fontWeight: 600, margin: '18px 0 8px' } },
+                t('ws.ancestors'),
               ),
+              ancestorRows.length === 0
+                ? h('p', { key: 'noAnc', style: { ...bodyStyle, margin: 0 } }, t('ws.noAncestors'))
+                : ancestorRows,
             ),
       ].filter((item) => item !== null)
       if (error !== null) children.push(h('p', { key: 'error', style: { ...errorStyle, margin: '8px 0 0' } }, error))

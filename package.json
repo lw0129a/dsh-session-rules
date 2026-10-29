@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-rules",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Per-session rules and notes for DeepSeek Harness: edit this conversation's constraints and coding conventions in a popup, import existing project guidelines read-only, and save rules extracted from the conversation. The saved text is injected into that session's system prompt on the next model call.",
   "type": "module",
   "license": "MIT",
