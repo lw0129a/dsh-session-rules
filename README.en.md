@@ -9,10 +9,15 @@ Every switch is **off by default**: writing text without ticking anything sends 
 ## Install
 
 ```bash
-dsh plugin --profile desktop add github:lw0129a/dsh-session-rules
-```
+# a local directory
+dsh plugin --profile desktop add /path/to/dsh-session-rules
 
-Update with the same command — the repo ships the built `dist/`, so nothing is compiled on install. When developing locally, install this directory by absolute path.
+# or straight from GitHub (builds on install)
+dsh plugin --profile desktop add github:lw0129a/dsh-session-rules
+
+# or from npm
+dsh plugin --profile desktop add dsh-session-rules
+```
 
 Restart DeepSeek Harness afterwards.
 
