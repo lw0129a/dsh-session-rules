@@ -60,9 +60,9 @@
       'dialog.scope': '作用范围：',
       'dialog.scopeSession': '本会话',
       'dialog.scopeGlobal': '所有会话',
-      'dialog.globalHint': '这条守则会加入每个会话的系统提示词；与本会话自己的守则会同时生效。',
+      'dialog.globalHint': '通用守则默认不生效：每个会话要在自己的弹窗里勾选「启用通用守则」才会加上它。',
       'dialog.enabledGlobal': '对所有会话生效',
-      'dialog.inheritGlobal': '启用「所有会话」的通用守则',
+      'dialog.inheritGlobal': '启用「所有会话」的通用守则（默认关闭）',
       'dialog.enabled': '对本会话生效',
       'dialog.disabledHint': '已关闭：守则内容保留，但不会加入本会话的系统提示词。',
     }
@@ -103,9 +103,9 @@
       'dialog.scope': 'Applies to: ',
       'dialog.scopeSession': 'this session',
       'dialog.scopeGlobal': 'all sessions',
-      'dialog.globalHint': 'These rules are added to every conversation’s system prompt, together with that session’s own rules.',
+      'dialog.globalHint': 'Off by default — each conversation only gets these rules after you tick the shared-rules box in its own dialog.',
       'dialog.enabledGlobal': 'Apply to all sessions',
-      'dialog.inheritGlobal': 'Also apply the rules shared by all sessions',
+      'dialog.inheritGlobal': 'Also apply the shared rules (off by default)',
       'dialog.enabled': 'Apply to this session',
       'dialog.disabledHint': 'Off — the rules are kept but not added to this session’s system prompt.',
     }
@@ -260,7 +260,7 @@
       const [rules, setRules] = React.useState('')
       const [sources, setSources] = React.useState([])
       const [enabled, setEnabled] = React.useState(true)
-      const [inherit, setInherit] = React.useState(true)
+      const [inherit, setInherit] = React.useState(false)
       const [loading, setLoading] = React.useState(true)
       const [busy, setBusy] = React.useState(false)
       const [error, setError] = React.useState(null)
@@ -285,7 +285,7 @@
             setRules(typeof body.rules === 'string' ? body.rules : '')
             setSources(Array.isArray(body.sources) ? body.sources : [])
             setEnabled(body.enabled !== false)
-            setInherit(body.inherit !== false)
+            setInherit(body.inherit === true)
           })
           .catch((cause) => {
             if (!cancelled) setError(`${t('dialog.loadFailed')}: ${String(cause?.message ?? cause)}`)

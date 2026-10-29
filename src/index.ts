@@ -62,14 +62,15 @@ function writeStore(store) {
 
 function entryOf(store, sessionId) {
   const entry = store[sessionId]
-  if (entry === null || typeof entry !== 'object') return { rules: '', sources: [], enabled: true, inherit: true }
+  if (entry === null || typeof entry !== 'object') return { rules: '', sources: [], enabled: true, inherit: false }
   return {
     rules: typeof entry.rules === 'string' ? entry.rules : '',
     sources: Array.isArray(entry.sources) ? entry.sources.filter((item) => typeof item === 'string') : [],
     // Absent means enabled: entries written before the switch existed keep working.
     enabled: entry.enabled !== false,
-    // Per-session opt-in for the shared ('*') rules; absent means yes.
-    inherit: entry.inherit !== false,
+    // Per-session opt-in for the shared ('*') rules: off unless the user
+    // enabled it for this session.
+    inherit: entry.inherit === true,
   }
 }
 
@@ -369,7 +370,7 @@ async function handleRequest(ctx, req, res) {
     return
   }
   const enabled = payload?.enabled !== false
-  const inherit = payload?.inherit !== false
+  const inherit = payload?.inherit === true
   const rawSources = Array.isArray(payload?.sources) ? payload.sources : []
   const sources = rawSources.filter((item) => typeof item === 'string' && item.length <= 500).slice(0, 100)
 

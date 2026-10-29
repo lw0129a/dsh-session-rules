@@ -16,8 +16,8 @@ assert.deepEqual(idCandidates('session-abc'), ['session-abc', 'abc'])
 assert.deepEqual(idCandidates('abc'), ['abc', 'session-abc'])
 
 // Missing / malformed store entries degrade to empty rules.
-assert.deepEqual(entryOf({}, 'abc'), { rules: '', sources: [], enabled: true, inherit: true })
-assert.deepEqual(entryOf({ abc: { rules: 42, sources: 'x' } }, 'abc'), { rules: '', sources: [], enabled: true, inherit: true })
+assert.deepEqual(entryOf({}, 'abc'), { rules: '', sources: [], enabled: true, inherit: false })
+assert.deepEqual(entryOf({ abc: { rules: 42, sources: 'x' } }, 'abc'), { rules: '', sources: [], enabled: true, inherit: false })
 assert.equal(rulesFor('abc'), '')
 
 const storeDir = path.join(home, 'plugin-data', 'dsh-session-rules')
@@ -44,13 +44,21 @@ assert.equal(rulesFor('abc'), '')
 assert.equal(rulesFor('session-abc'), '')
 assert.equal(entryOf(JSON.parse(JSON.stringify({ abc: { rules: 'x' } })), 'abc').enabled, true)
 
-// Global rules (store key '*') apply to every session, before that session's own.
+// Shared rules (store key '*') are off by default: a session gets them only
+// after the user turns the switch on.
 writeFileSync(
   path.join(storeDir, 'rules.json'),
   JSON.stringify({ '*': { rules: '通用：中文回复', sources: [] }, abc: { rules: '本会话：先跑测试', sources: [] } }),
 )
+assert.equal(rulesFor('abc'), '本会话：先跑测试')
+assert.equal(rulesFor('session-other'), '')
+
+writeFileSync(
+  path.join(storeDir, 'rules.json'),
+  JSON.stringify({ '*': { rules: '通用：中文回复', sources: [] }, abc: { rules: '本会话：先跑测试', sources: [], inherit: true } }),
+)
 assert.equal(rulesFor('abc'), '通用：中文回复\n\n本会话：先跑测试')
-assert.equal(rulesFor('session-other'), '通用：中文回复')
+assert.equal(rulesFor('session-other'), '')
 
 // Global rules respect the same on/off switch.
 writeFileSync(path.join(storeDir, 'rules.json'), JSON.stringify({ '*': { rules: '通用：中文回复', sources: [], enabled: false } }))
@@ -58,13 +66,13 @@ assert.equal(rulesFor('abc'), '')
 writeFileSync(path.join(storeDir, 'rules.json'), JSON.stringify({ '*': { rules: '通用：中文回复', sources: [] } }))
 assert.equal(entryOf({ '*': { rules: 'x' } }, '*').rules, 'x')
 
-// A session can opt out of the shared rules while keeping its own.
+// A session that keeps only its own rules ignores the shared ones.
 writeFileSync(
   path.join(storeDir, 'rules.json'),
   JSON.stringify({ '*': { rules: '通用：中文回复', sources: [] }, abc: { rules: '本会话：先跑测试', sources: [], inherit: false } }),
 )
 assert.equal(rulesFor('abc'), '本会话：先跑测试')
-assert.equal(rulesFor('session-other'), '通用：中文回复')
+assert.equal(rulesFor('session-other'), '')
 
 // No sessions directory => nothing to import, and no throw.
 assert.deepEqual(projectFiles('session-abc'), [])
