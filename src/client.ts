@@ -62,6 +62,7 @@
       'dialog.scopeGlobal': '所有会话',
       'dialog.globalHint': '这条守则会加入每个会话的系统提示词；与本会话自己的守则会同时生效。',
       'dialog.enabledGlobal': '对所有会话生效',
+      'dialog.inheritGlobal': '启用「所有会话」的通用守则',
       'dialog.enabled': '对本会话生效',
       'dialog.disabledHint': '已关闭：守则内容保留，但不会加入本会话的系统提示词。',
     }
@@ -104,6 +105,7 @@
       'dialog.scopeGlobal': 'all sessions',
       'dialog.globalHint': 'These rules are added to every conversation’s system prompt, together with that session’s own rules.',
       'dialog.enabledGlobal': 'Apply to all sessions',
+      'dialog.inheritGlobal': 'Also apply the rules shared by all sessions',
       'dialog.enabled': 'Apply to this session',
       'dialog.disabledHint': 'Off — the rules are kept but not added to this session’s system prompt.',
     }
@@ -258,6 +260,7 @@
       const [rules, setRules] = React.useState('')
       const [sources, setSources] = React.useState([])
       const [enabled, setEnabled] = React.useState(true)
+      const [inherit, setInherit] = React.useState(true)
       const [loading, setLoading] = React.useState(true)
       const [busy, setBusy] = React.useState(false)
       const [error, setError] = React.useState(null)
@@ -282,6 +285,7 @@
             setRules(typeof body.rules === 'string' ? body.rules : '')
             setSources(Array.isArray(body.sources) ? body.sources : [])
             setEnabled(body.enabled !== false)
+            setInherit(body.inherit !== false)
           })
           .catch((cause) => {
             if (!cancelled) setError(`${t('dialog.loadFailed')}: ${String(cause?.message ?? cause)}`)
@@ -330,7 +334,7 @@
             method: 'POST',
             credentials: 'same-origin',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ sessionId: targetId, rules, sources, enabled }),
+            body: JSON.stringify({ sessionId: targetId, rules, sources, enabled, inherit }),
           })
           const body = await res.json()
           if (!body || body.ok !== true) throw new Error(body?.error ?? `HTTP ${res.status}`)
@@ -452,6 +456,22 @@
       const children = review !== null ? reviewChildren : [
         scopeRow,
         scope === 'global' ? h('p', { key: 'globalHint', style: { ...bodyStyle, margin: '0 0 10px' } }, t('dialog.globalHint')) : null,
+        scope === 'global'
+          ? null
+          : h(
+              'label',
+              {
+                key: 'inherit',
+                style: { display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 10px', fontSize: 13, cursor: 'pointer', userSelect: 'none' },
+              },
+              h('input', {
+                type: 'checkbox',
+                checked: inherit,
+                onChange: (event) => setInherit(event.target.checked),
+                style: { width: 14, height: 14, accentColor: 'var(--dsw-alias-brand-primary, #0969da)', cursor: 'pointer' },
+              }),
+              h('span', null, t('dialog.inheritGlobal')),
+            ),
         h(
           'label',
           {

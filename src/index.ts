@@ -62,12 +62,14 @@ function writeStore(store) {
 
 function entryOf(store, sessionId) {
   const entry = store[sessionId]
-  if (entry === null || typeof entry !== 'object') return { rules: '', sources: [], enabled: true }
+  if (entry === null || typeof entry !== 'object') return { rules: '', sources: [], enabled: true, inherit: true }
   return {
     rules: typeof entry.rules === 'string' ? entry.rules : '',
     sources: Array.isArray(entry.sources) ? entry.sources.filter((item) => typeof item === 'string') : [],
     // Absent means enabled: entries written before the switch existed keep working.
     enabled: entry.enabled !== false,
+    // Per-session opt-in for the shared ('*') rules; absent means yes.
+    inherit: entry.inherit !== false,
   }
 }
 
@@ -91,24 +93,28 @@ function isTargetId(value) {
 
 // Evaluated at every prompt assembly: a broken store must never take prompt
 // assembly down, so failures fall back to "no rules".
-// The global rules come first, then the session's own; both are injected.
+// Order: the shared ('*') rules first, then this session's own. A session can
+// opt out of the shared ones with its `inherit` flag.
 function rulesFor(sessionId) {
   if (!isSessionId(sessionId)) return ''
   try {
     const store = readStore()
-    const parts = [rulesOfKey(store, GLOBAL_KEY), rulesOfKey(store, sessionId)].filter((part) => part !== '')
-    return parts.join('\n\n')
+    const own = ownEntry(store, sessionId)
+    const parts = []
+    if (own.inherit) parts.push(activeRules(entryOf(store, GLOBAL_KEY)))
+    if (own.enabled) parts.push(activeRules(own))
+    return parts.filter((part) => part !== '').join('\n\n')
   } catch {
     return ''
   }
 }
 
-function rulesOfKey(store, sessionId) {
-  for (const key of idCandidates(sessionId)) {
-    const { rules, enabled } = entryOf(store, key)
-    if (enabled && rules.trim() !== '') return rules.trim()
-  }
-  return ''
+function activeRules(entry) {
+  return entry.enabled && entry.rules.trim() !== '' ? entry.rules.trim() : ''
+}
+
+function ownEntry(store, sessionId) {
+  return entryOf(store, keyFor(store, sessionId))
 }
 
 function storeKey(store, sessionId) {
@@ -307,7 +313,14 @@ async function handleRequest(ctx, req, res) {
     }
     const store = readStore()
     const entry = entryOf(store, storeKey(store, sessionId))
-    const body: any = { ok: true, sessionId, rules: entry.rules, sources: entry.sources, enabled: entry.enabled }
+    const body: any = {
+      ok: true,
+      sessionId,
+      rules: entry.rules,
+      sources: entry.sources,
+      enabled: entry.enabled,
+      inherit: entry.inherit,
+    }
     if (url.searchParams.get('candidates') === '1' && isSessionId(sessionId)) body.files = projectFiles(sessionId)
     sendJson(res, 200, body)
     return
@@ -356,11 +369,12 @@ async function handleRequest(ctx, req, res) {
     return
   }
   const enabled = payload?.enabled !== false
+  const inherit = payload?.inherit !== false
   const rawSources = Array.isArray(payload?.sources) ? payload.sources : []
   const sources = rawSources.filter((item) => typeof item === 'string' && item.length <= 500).slice(0, 100)
 
   const store = readStore()
-  store[storeKey(store, sessionId)] = { rules, sources, enabled, updatedAt: new Date().toISOString() }
+  store[storeKey(store, sessionId)] = { rules, sources, enabled, inherit, updatedAt: new Date().toISOString() }
   try {
     writeStore(store)
   } catch (error) {
@@ -368,7 +382,7 @@ async function handleRequest(ctx, req, res) {
     sendJson(res, 500, { ok: false, error: 'could not save rules' })
     return
   }
-  sendJson(res, 200, { ok: true, sessionId, rules, sources, enabled })
+  sendJson(res, 200, { ok: true, sessionId, rules, sources, enabled, inherit })
 }
 
 // --- plugin entry ----------------------------------------------------------
