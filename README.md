@@ -37,7 +37,7 @@ dsh plugin --profile desktop add dsh-session-rules
 2. 直接写，或点「导入项目规范」勾选要复制的文件。
 3. 「保存」→ 下一轮对话生效；清空内容再保存 = 取消注入。
 
-守则保存在 `~/.dsh/plugin-data/dsh-session-rules/rules.json`（`DSH_HOME` 可覆盖），按会话 id 分开存放；工作区守则存在 `ws:<工作区绝对路径>` 键下（例如 `ws:/Users/lw/dev`）；层级由 `~/.dsh/storages/workspace.json` 里的路径前缀推导，每个工作区用 `inherit` 记录它勾选沿用的祖先路径。注入顺序是「已启用的上层（由外到内）→ 本层 → 本会话」。
+守则保存在 `~/.dsh/plugin-data/dsh-session-rules/rules.json`（`DSH_HOME` 可覆盖），按会话 id 分开存放；工作区守则存在 `ws:<工作区绝对路径>` 键下（例如 `ws:/Users/lw/dev`）；层级由路径本身推导：`~/.dsh/storages/workspace.json` 里已登记的工作区，加上它们所在但没登记的父目录（在家目录以下、非根目录），每一层都能单独保存守则；每个工作区用 `inherit` 记录它勾选沿用的祖先路径。旧版本按会话树目录名存的 `ws:--Users-lw-dev--` 会在读取时自动改写为 `ws:/绝对路径`。注入顺序是「已启用的上层（由外到内）→ 本层 → 本会话」。
 
 ## 安全与边界
 

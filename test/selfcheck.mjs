@@ -9,7 +9,7 @@ const home = mkdtempSync(path.join(tmpdir(), 'dsh-session-rules-'))
 process.env.DSH_HOME = home
 
 const { __test } = await import('../dist/index.js')
-const { rulesFor, entryOf, idCandidates, projectFiles, workspaceOf, ancestorsOf, handleRequest } = __test
+const { rulesFor, entryOf, idCandidates, projectFiles, workspaceOf, ancestorsOf, knownWorkspaces, handleRequest } = __test
 
 // Session ids reach us as `session-<uuid>` in the client and at prompt
 // assembly; the store must find either spelling.
@@ -165,6 +165,58 @@ assert.equal(badRes.status, 404)
 
 // No sessions directory => nothing to import, and no throw.
 assert.deepEqual(projectFiles('session-abc'), [])
+
+// A parent directory that was never registered as a workspace still becomes a
+// level, so the chain is hierarchical however flat the registry is.
+mkdirSync('/tmp/ws-parent', { recursive: true })
+mkdirSync('/tmp/ws-parent/app', { recursive: true })
+writeFileSync(
+  path.join(home, 'storages', 'workspace.json'),
+  JSON.stringify({
+    tables: {
+      workspaces: {
+        only: { path: '/tmp/ws-parent/app', title: 'app', sessionIds: ['session-abc'] },
+      },
+    },
+  }),
+)
+const known = knownWorkspaces().map((item) => item.path)
+assert.ok(known.includes('/tmp/ws-parent'), 'unregistered parent is a level')
+assert.ok(!known.includes('/tmp'), 'shallow directories are not levels')
+assert.ok(!known.includes('/'), 'the root is never a level')
+assert.deepEqual(ancestorsOf('/tmp/ws-parent/app').map((item) => item.path), ['/tmp/ws-parent'])
+assert.equal(knownWorkspaces().find((item) => item.path === '/tmp/ws-parent').implicit, true)
+
+// Rules can be saved on an implicit level, and a child opts into it.
+const implicitBody = JSON.stringify({ action: 'save-workspace', path: '/tmp/ws-parent', rules: '上层：统一用 pnpm' })
+const implicitRes = fakeResponse()
+await handleRequest(
+  ctx,
+  Object.assign(Readable.from([Buffer.from(implicitBody)]), {
+    method: 'POST',
+    url: '/__chameleon/session/rules',
+    headers: {},
+  }),
+  implicitRes,
+)
+assert.equal(implicitRes.status, 200)
+store({
+  'ws:/tmp/ws-parent': { rules: '上层：统一用 pnpm' },
+  'ws:/tmp/ws-parent/app': { rules: '本层：先跑测试', inherit: ['/tmp/ws-parent'] },
+  abc: { rules: '', sources: [], enabled: false, inherit: true },
+})
+assert.equal(rulesFor('abc'), '上层：统一用 pnpm\n\n本层：先跑测试')
+
+// Blocks keyed by the old encoded directory name are rewritten to the absolute
+// path, so one naming scheme covers every level.
+mkdirSync('/tmp/wsx', { recursive: true })
+writeFileSync(
+  path.join(home, 'storages', 'workspace.json'),
+  JSON.stringify({ tables: { workspaces: { wsx: { path: '/tmp/wsx', title: 'wsx', sessionIds: ['session-old'] } } } }),
+)
+store({ 'ws:--tmp-wsx--': { rules: '旧键内容' }, old: { rules: '', sources: [], enabled: false, inherit: true } })
+assert.equal(rulesFor('old'), '旧键内容')
+assert.deepEqual(Object.keys(readFileSync(path.join(storeDir, 'rules.json'), 'utf8') ? JSON.parse(readFileSync(path.join(storeDir, 'rules.json'), 'utf8')) : {}).sort(), ['old', 'ws:/tmp/wsx'])
 
 rmSync(home, { recursive: true, force: true })
 console.log('selfcheck ok')

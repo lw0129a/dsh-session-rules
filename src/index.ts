@@ -44,12 +44,51 @@ function storeFile() {
 }
 
 function readStore() {
+  let parsed
   try {
-    const parsed = JSON.parse(readFileSync(storeFile(), 'utf8'))
-    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+    parsed = JSON.parse(readFileSync(storeFile(), 'utf8'))
   } catch {
     return {}
   }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+  return migrateStore(parsed)
+}
+
+// Older builds keyed workspace blocks by the encoded sessions directory
+// (`ws:--Users-lw-dev--`). Rewrite those to `ws:<absolute path>` so every level
+// of the hierarchy lives under one naming scheme; merge when both exist.
+function migrateStore(store) {
+  const legacy = Object.keys(store).filter((key) => {
+    if (!key.startsWith('ws:') || key.startsWith('ws:/')) return false
+    return decodeWorkspace(key.slice(3)) !== undefined
+  })
+  if (legacy.length === 0) return store
+  for (const key of legacy) {
+    const target = workspaceKey(decodeWorkspace(key.slice(3)))
+    const entry = store[key]
+    const previous = store[target]
+    if (previous === undefined || previous === null || typeof previous !== 'object') {
+      store[target] = entry
+    } else {
+      const rules = [previous.rules, entry?.rules]
+        .filter((text) => typeof text === 'string' && text.trim() !== '')
+        .join('\n\n')
+      const inherit = [
+        ...new Set([
+          ...(Array.isArray(previous.inherit) ? previous.inherit : []),
+          ...(Array.isArray(entry?.inherit) ? entry.inherit : []),
+        ]),
+      ]
+      store[target] = { ...previous, rules, inherit, updatedAt: new Date().toISOString() }
+    }
+    delete store[key]
+  }
+  try {
+    writeStore(store)
+  } catch {
+    // A read must never fail because the rewrite could not be persisted.
+  }
+  return store
 }
 
 function writeStore(store) {
@@ -137,8 +176,44 @@ function workspaceEntryOf(store, workspacePath) {
   }
 }
 
+// True when `candidate` is a directory a workspace path may nest under. The
+// home directory and everything above it are never levels of their own, and
+// neither is the root: those would be noise, not project grouping.
+function usableLevel(candidate) {
+  if (candidate === '/' || candidate === '') return false
+  if (candidate.split('/').filter((part) => part !== '').length < 2) return false
+  const home = homedir()
+  if (home !== '' && (home === candidate || home.startsWith(`${candidate}/`))) return false
+  try {
+    return statSync(candidate).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+// The registered workspaces, plus the directories they live under: a parent
+// folder that was never registered as a workspace is still a level, so the
+// chain stays hierarchical no matter how flat the registry is.
+function knownWorkspaces() {
+  const registered = workspaceRegistry()
+  const byPath = new Map()
+  for (const item of registered) byPath.set(item.path, { ...item, implicit: false })
+  for (const item of registered) {
+    let parent = path.dirname(item.path)
+    while (parent !== '/' && usableLevel(parent)) {
+      if (!byPath.has(parent)) {
+        byPath.set(parent, { path: parent, title: path.basename(parent), sessionIds: [], implicit: true })
+      }
+      const next = path.dirname(parent)
+      if (next === parent) break
+      parent = next
+    }
+  }
+  return [...byPath.values()].sort((left, right) => left.path.localeCompare(right.path))
+}
+
 function ancestorsOf(workspacePath) {
-  return workspaceRegistry()
+  return knownWorkspaces()
     .filter(
       (item) =>
         item.path !== workspacePath &&
@@ -260,7 +335,9 @@ function decodeWorkspace(encoded) {
   const attempts = [`/${encoded.replace(/^-/, '').replaceAll('-', '/')}`, encoded.replaceAll('-', '/')]
   for (const attempt of attempts) {
     try {
-      if (existsSync(attempt) && statSync(attempt).isDirectory()) return attempt
+      if (!existsSync(attempt) || !statSync(attempt).isDirectory()) continue
+      const clean = path.normalize(attempt).replace(/\/+$/, '')
+      return clean === '' ? '/' : clean
     } catch {
       // Try the next decoding.
     }
@@ -398,7 +475,7 @@ async function handleRequest(ctx, req, res) {
       const store = readStore()
       sendJson(res, 200, {
         ok: true,
-        workspaces: workspaceRegistry().map((item) => {
+        workspaces: knownWorkspaces().map((item) => {
           const entry = workspaceEntryOf(store, item.path)
           return {
             path: item.path,
@@ -406,6 +483,7 @@ async function handleRequest(ctx, req, res) {
             rules: entry.rules,
             sources: entry.sources,
             inherit: entry.inherit,
+            implicit: item.implicit === true,
             ancestors: ancestorsOf(item.path).map((ancestor) => ({
               path: ancestor.path,
               title: ancestor.title,
@@ -480,7 +558,7 @@ async function handleRequest(ctx, req, res) {
 
   if (payload?.action === 'save-workspace') {
     const workspacePath = typeof payload?.path === 'string' ? payload.path.trim() : ''
-    if (workspacePath === '' || !workspaceRegistry().some((item) => item.path === workspacePath)) {
+    if (workspacePath === '' || !knownWorkspaces().some((item) => item.path === workspacePath)) {
       sendJson(res, 404, { ok: false, error: 'unknown workspace' })
       return
     }
@@ -592,6 +670,7 @@ export const __test = {
   workspaceOf,
   workspaceEntry,
   workspaceRegistry,
+  knownWorkspaces,
   workspaceRulesOf,
   ancestorsOf,
   workspaceForSession,
