@@ -474,6 +474,36 @@ window.__ModuleLoader__.load({
             setValue(target, `${raw.slice(0, start)}${next}${raw.slice(end)}`);
             target.setSelectionRange(caret, caret);
         }
+        // Marker families: 1./1) and (1) count with digits, a./a) and (a) with
+        // letters. Two items only renumber together when they share a family.
+        function markerFamily(marker) {
+            if (/^\(\d+\)$/.test(marker))
+                return 'paren-number';
+            if (/^\d+[.)]$/.test(marker))
+                return 'number';
+            if (/^\([a-z]\)$/i.test(marker))
+                return 'paren-letter';
+            if (/^[a-z][.)]$/i.test(marker))
+                return 'letter';
+            return '';
+        }
+        // After Enter inserts a sibling, the items below it at the same indent keep
+        // counting from that sibling, so a list never shows 3 twice.
+        function renumberTail(lines, index, indent, marker, gap) {
+            const family = markerFamily(marker);
+            if (family === '')
+                return lines;
+            let current = marker;
+            for (let i = index; i < lines.length; i += 1) {
+                const match = LIST_ITEM.exec(lines[i]);
+                if (match === null || match[1] !== indent || markerFamily(match[2]) !== family)
+                    break;
+                if (match[2] !== current)
+                    lines[i] = `${indent}${current}${gap}${match[4]}`;
+                current = nextMarker(current);
+            }
+            return lines;
+        }
         function handleListKeys(event) {
             const target = event.target;
             if (event.key === 'Tab') {
@@ -510,7 +540,11 @@ window.__ModuleLoader__.load({
             }
             else {
                 const insert = `${nextMarker(match[2])}${match[3]}`;
-                setValue(target, `${raw.slice(0, caret)}\n${match[1]}${insert}${raw.slice(caret)}`);
+                const head = `${raw.slice(0, caret)}\n${match[1]}${insert}`;
+                // tail[0] is what is left of the current line; the siblings below it
+                // start at index 1 and are renumbered from the fresh marker.
+                const tail = renumberTail(raw.slice(caret).split('\n'), 1, match[1], nextMarker(match[2]), match[3]);
+                setValue(target, `${head}${tail.join('\n')}`);
                 target.setSelectionRange(caret + 1 + match[1].length + insert.length, caret + 1 + match[1].length + insert.length);
             }
             target.dispatchEvent(new Event('input', { bubbles: true }));

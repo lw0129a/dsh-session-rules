@@ -53,7 +53,7 @@ const listItemLine = [
 ].map((needle) =>
   clientSource.slice(clientSource.indexOf(needle), clientSource.indexOf('\n', clientSource.indexOf(needle))),
 ).join('\n')
-const { listContinuation, indentLine } = new Function(`
+const { listContinuation, indentLine, renumberTail } = new Function(`
   const INDENT = '  '
   ${listItemLine}
   ${sourceOf('nextMarker')}
@@ -61,7 +61,9 @@ const { listContinuation, indentLine } = new Function(`
   ${sourceOf('listContinuation')}
   ${sourceOf('markerAtDepth')}
   ${sourceOf('indentLine')}
-  return { listContinuation, indentLine }
+  ${sourceOf('markerFamily')}
+  ${sourceOf('renumberTail')}
+  return { listContinuation, indentLine, renumberTail }
 `)()
 
 assert.equal(listContinuation('- 需要编写样式'), '- ')
@@ -80,6 +82,14 @@ assert.equal(indentLine('    (1) 三级', 1), '      a. 三级')
 assert.equal(indentLine('      a. 四级', 1), '        (a) 四级')
 assert.equal(indentLine('        (a) 五级', 1), '          (a) 五级', 'past level five the marker repeats')
 assert.equal(indentLine('普通段落', 1), '  普通段落')
+// Enter between numbered siblings renumbers the ones below instead of repeating 3.
+assert.deepEqual(
+  renumberTail(['  9. 甲', '  9. 乙', '- 别的层级'], 0, '  ', '2.', ' '),
+  ['  2. 甲', '  3. 乙', '- 别的层级'],
+)
+assert.deepEqual(renumberTail(['  (5) 甲', '  (5) 乙'], 0, '  ', '(2)', ' '), ['  (2) 甲', '  (3) 乙'])
+assert.deepEqual(renumberTail(['9. 同层', '9. 再一条'], 0, '', '2.', ' '), ['2. 同层', '3. 再一条'])
+assert.deepEqual(renumberTail(['- 甲', '- 乙'], 0, '', '2.', ' '), ['- 甲', '- 乙'], 'a dash list is not renumbered')
 
 // Undo / redo: one snapshot per burst, so a run of typing undoes in one step.
 const { createHistory, historyRecord, historyUndo, historyRedo } = new Function(`
