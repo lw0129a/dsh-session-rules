@@ -224,6 +224,18 @@ store({
 })
 assert.equal(rulesFor('abc'), '上层：统一用 pnpm')
 
+// Overlapping levels: a child that already repeats its parent's block must not
+// duplicate those lines when the session ticks both.
+store({
+  'ws:/tmp/ws-parent': { rules: '- 共用：统一用 pnpm\n- 上层：提交前跑测试' },
+  'ws:/tmp/ws-parent/app': { rules: '- 共用：统一用 pnpm\n- 本层：先跑测试', inherit: ['/tmp/ws-parent'] },
+  abc: { rules: '- 共用：统一用 pnpm\n- 会话：中文回复', sources: [], enabled: true, inherit: ['/tmp/ws-parent', '/tmp/ws-parent/app'] },
+})
+assert.equal(
+  rulesFor('abc'),
+  '- 共用：统一用 pnpm\n- 上层：提交前跑测试\n\n- 本层：先跑测试\n\n- 会话：中文回复',
+)
+
 // Unknown paths in the list are ignored.
 store({ 'ws:/tmp/ws-parent/app': { rules: '本层：先跑测试' }, abc: { rules: '', sources: [], enabled: false, inherit: ['/etc'] } })
 assert.equal(rulesFor('abc'), '')

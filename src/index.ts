@@ -299,6 +299,30 @@ function sharedText(entry) {
   return entry.rules.trim()
 }
 
+// Layers can overlap: a session that ticks both a parent and its child would
+// inject the parent's block twice. Identical lines are kept once, in the order
+// they first appear; blank lines inside one block survive, blocks stay apart.
+function dedupeLines(parts) {
+  const seen = new Set()
+  const blocks = []
+  for (const part of parts) {
+    const kept = []
+    for (const line of part.split('\n')) {
+      const key = line.trim()
+      if (key === '') {
+        kept.push(line)
+        continue
+      }
+      if (seen.has(key)) continue
+      seen.add(key)
+      kept.push(line.trimEnd())
+    }
+    const text = kept.join('\n').trim()
+    if (text !== '') blocks.push(text)
+  }
+  return blocks.join('\n\n')
+}
+
 function activeRules(entry) {
   return entry.enabled && entry.rules.trim() !== '' ? entry.rules.trim() : ''
 }
@@ -320,7 +344,7 @@ function rulesFor(sessionId) {
     }
   }
   if (own.enabled) parts.push(activeRules(own))
-  return parts.filter((part) => part !== '').join('\n\n')
+  return dedupeLines(parts.filter((part) => part !== ''))
 }
 
 function keyFor(store, sessionId) {
@@ -722,6 +746,7 @@ export function apply(ctx) {
 // Exposed for the self-check: the store helpers and the handler are plain
 // functions that take their dependencies explicitly.
 export const __test = {
+  dedupeLines,
   handleRequest,
   readStore,
   rulesFor,
