@@ -1,14 +1,15 @@
 // Self-check for the host half: no framework, run with `npm test`.
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { Readable } from 'node:stream'
 
 const home = mkdtempSync(path.join(tmpdir(), 'dsh-session-rules-'))
 process.env.DSH_HOME = home
 
 const { __test } = await import('../dist/index.js')
-const { rulesFor, entryOf, idCandidates, projectFiles, workspaceOf } = __test
+const { rulesFor, entryOf, idCandidates, projectFiles, workspaceOf, ancestorsOf, handleRequest } = __test
 
 // Session ids reach us as `session-<uuid>` in the client and at prompt
 // assembly; the store must find either spelling.
@@ -44,42 +45,123 @@ store({ abc: { rules: '先跑测试', sources: [], enabled: false } })
 assert.equal(rulesFor('abc'), '')
 assert.equal(rulesFor('session-abc'), '')
 
-// Shared rules live per workspace: the sessions tree decides which block a
-// session belongs to, and the session opts in with `inherit`.
-mkdirSync(path.join(home, 'sessions', '--tmp-ws--'), { recursive: true })
-writeFileSync(path.join(home, 'sessions', '--tmp-ws--', 'session-abc'), '')
-const WS_KEY = 'ws:--tmp-ws--'
-
-store({ [WS_KEY]: { rules: '工作区：统一用 pnpm' }, abc: { rules: '本会话：先跑测试', sources: [], enabled: true } })
-assert.equal(rulesFor('abc'), '本会话：先跑测试')
-assert.equal(rulesFor('session-other'), '')
+// Workspace rules: registered workspaces nest by path, and each level opts into
+// the ancestors it wants (`inherit` holds their absolute paths).
+const workspaces = {
+  parent: { path: '/tmp/ws-parent', title: 'anjuyi', sessionIds: ['parent-session'] },
+  app: { path: '/tmp/ws-parent/app', title: 'uni-platform-app', sessionIds: ['session-abc'] },
+  other: { path: '/tmp/ws-other', title: 'other', sessionIds: ['session-xyz'] },
+}
+mkdirSync(path.join(home, 'storages'), { recursive: true })
+writeFileSync(
+  path.join(home, 'storages', 'workspace.json'),
+  JSON.stringify({ unit: 'x', global: {}, tables: { workspaces } }),
+)
 
 store({
-  [WS_KEY]: { rules: '工作区：统一用 pnpm' },
-  abc: { rules: '本会话：先跑测试', sources: [], enabled: true, inherit: true },
-})
-assert.equal(rulesFor('abc'), '工作区：统一用 pnpm\n\n本会话：先跑测试')
-assert.equal(rulesFor('session-abc'), '工作区：统一用 pnpm\n\n本会话：先跑测试')
-
-// A session in another workspace never sees this block.
-mkdirSync(path.join(home, 'sessions', '--tmp-other--'), { recursive: true })
-writeFileSync(path.join(home, 'sessions', '--tmp-other--', 'session-xyz'), '')
-store({
-  [WS_KEY]: { rules: '工作区：统一用 pnpm' },
+  abc: { rules: '本会话：先跑测试', sources: [], enabled: true },
   xyz: { rules: '', sources: [], enabled: false, inherit: true },
 })
+assert.equal(rulesFor('abc'), '本会话：先跑测试')
 assert.equal(rulesFor('xyz'), '')
 
-// The shared block alone is enough: the session may keep no rules of its own.
-store({ [WS_KEY]: { rules: '工作区：统一用 pnpm' }, abc: { rules: '', sources: [], enabled: false, inherit: true } })
-assert.equal(rulesFor('abc'), '工作区：统一用 pnpm')
+// Opting into a parent prepends it; the parent is read-only from the child.
+store({
+  'ws:/tmp/ws-parent': { rules: '上层：统一用 pnpm' },
+  'ws:/tmp/ws-parent/app': { rules: '本层：先跑测试' },
+  abc: { rules: '', sources: [], enabled: false, inherit: true },
+})
+assert.equal(rulesFor('abc'), '本层：先跑测试')
 
-// An empty shared block injects nothing.
-store({ [WS_KEY]: { rules: '   ' }, abc: { rules: '本会话：先跑测试', sources: [], enabled: true, inherit: true } })
-assert.equal(rulesFor('abc'), '本会话：先跑测试')
+store({
+  'ws:/tmp/ws-parent': { rules: '上层：统一用 pnpm' },
+  'ws:/tmp/ws-parent/app': { rules: '本层：先跑测试', inherit: ['/tmp/ws-parent'] },
+  abc: { rules: '', sources: [], enabled: false, inherit: true },
+})
+assert.equal(rulesFor('abc'), '上层：统一用 pnpm\n\n本层：先跑测试')
 
-// The workspace block is discovered from the sessions tree, not from the store.
-assert.equal(workspaceOf('session-abc'), '--tmp-ws--')
+// A session that has not opted in gets nothing from its workspace.
+store({
+  'ws:/tmp/ws-parent/app': { rules: '本层：先跑测试', inherit: ['/tmp/ws-parent'] },
+  abc: { rules: '', sources: [], enabled: false, inherit: false },
+})
+assert.equal(rulesFor('abc'), '')
+
+// Non-registered paths in `inherit` are ignored.
+store({ 'ws:/tmp/ws-parent/app': { rules: '本层：先跑测试', inherit: ['/etc'] }, abc: { rules: '', sources: [], enabled: false, inherit: true } })
+assert.equal(rulesFor('abc'), '本层：先跑测试')
+
+// Another workspace's rules never reach this session.
+store({
+  'ws:/tmp/ws-other': { rules: '别的工作区' },
+  abc: { rules: '', sources: [], enabled: false, inherit: true },
+})
+assert.equal(rulesFor('abc'), '')
+
+// Ancestors come outermost first and only from the registry.
+assert.deepEqual(
+  ancestorsOf('/tmp/ws-parent/app').map((item) => item.path),
+  ['/tmp/ws-parent'],
+)
+assert.deepEqual(ancestorsOf('/tmp/ws-parent'), [])
+
+// HTTP: the dialog reads the workspace tree in one request.
+const ctx = { get: () => ({ requestRejection: () => undefined }), logger: { warn() {} } }
+function fakeResponse() {
+  return {
+    status: 0,
+    payload: '',
+    writeHead(status) {
+      this.status = status
+    },
+    end(text) {
+      this.payload = text
+    },
+  }
+}
+const listRes = fakeResponse()
+await handleRequest(ctx, { method: 'GET', url: '/__chameleon/session/rules?workspaces=1', headers: {} }, listRes)
+const list = JSON.parse(listRes.payload).workspaces
+assert.deepEqual(
+  list.map((item) => item.title),
+  ['other', 'anjuyi', 'uni-platform-app'],
+)
+assert.deepEqual(
+  list.find((item) => item.title === 'uni-platform-app').ancestors.map((item) => item.title),
+  ['anjuyi'],
+)
+
+// Saving a workspace block validates the path against the registry.
+const saveRes = fakeResponse()
+const saveBody = JSON.stringify({
+  action: 'save-workspace',
+  path: '/tmp/ws-parent/app',
+  rules: '本层：先跑测试',
+  inherit: ['/tmp/ws-parent', '/etc'],
+})
+await handleRequest(
+  ctx,
+  Object.assign(Readable.from([Buffer.from(saveBody)]), {
+    method: 'POST',
+    url: '/__chameleon/session/rules',
+    headers: {},
+  }),
+  saveRes,
+)
+assert.equal(saveRes.status, 200)
+assert.deepEqual(JSON.parse(readFileSync(path.join(storeDir, 'rules.json'), 'utf8'))['ws:/tmp/ws-parent/app'].inherit, ['/tmp/ws-parent'])
+
+const badRes = fakeResponse()
+await handleRequest(
+  ctx,
+  Object.assign(Readable.from([Buffer.from(JSON.stringify({ action: 'save-workspace', path: '/etc', rules: 'x' }))]), {
+    method: 'POST',
+    url: '/__chameleon/session/rules',
+    headers: {},
+  }),
+  badRes,
+)
+assert.equal(badRes.status, 404)
 
 // No sessions directory => nothing to import, and no throw.
 assert.deepEqual(projectFiles('session-abc'), [])

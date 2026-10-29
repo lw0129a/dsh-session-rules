@@ -18,8 +18,13 @@
 
     const MENU_SLOT = 'sidebar.workspaces.session.menu.item'
     const OVERLAY_SLOT = 'shell.overlay'
+    // `sidebar.workspaces` is a `single` slot owned by the built-in browser, and
+    // the workspace "..." menu is hard-coded, so the workspace editor hangs off
+    // the footer action list (a `list` slot: any number of plugins may join).
+    const FOOTER_SLOT = 'sidebar.footer.action'
     const MENU_ID = 'session-rules.menu'
     const DIALOG_ID = 'session-rules.dialog'
+    const ENTRY_ID = 'session-rules.workspace-entry'
     const ENDPOINT = '/__chameleon/session/rules'
     const NS = 'session-rules'
 
@@ -58,11 +63,27 @@
       'dialog.saveFailed': '保存失败',
       'dialog.empty': '（尚未设置，留空即不注入）',
       'dialog.sessionSection': '本会话守则',
-      'dialog.sharedSection': '工作区通用守则',
-      'dialog.sharedHint': '同一工作区（同一目录）的所有会话共用这一份，只能在会话里修改并保存，不提供删除；默认关闭，每个会话要自己勾选下方开关才会生效。',
+      'dialog.sharedSection': '工作区守则',
+      'dialog.sharedHint': '这里只读预览本会话所在工作区、已启用的上层守则。工作区守则要在「工作区守则」面板里编辑，默认不带过来。',
       'dialog.sharedUnavailable': '未能识别本会话的工作区，本次只能编辑本会话守则。',
-      'dialog.inheritShared': '对本会话启用工作区通用守则（默认关闭）',
-      'dialog.sharedPlaceholder': '例如：\n- 本工作区统一用 pnpm\n- 提交前跑 npm test',
+      'dialog.inheritShared': '对本会话启用工作区守则（默认关闭）',
+      'dialog.sharedEditHint': '要改这些内容，用侧边栏底部的「工作区守则」。',
+      'entry.label': '工作区守则',
+      'entry.title': '按下层→上层为每个工作区维护守则',
+      'ws.title': '工作区守则',
+      'ws.hint': '每个工作区可以写一份守则；子工作区只能勾选是否沿用上层，不能改上层内容。会话里默认不带入，需要各自勾选启用。',
+      'ws.empty': '还没有登记任何工作区。',
+      'ws.loadFailed': '读取失败',
+      'ws.saveFailed': '保存失败',
+      'ws.saved': '已保存。',
+      'ws.own': '本工作区守则',
+      'ws.ownPlaceholder': '例如：\n- 本工作区统一用 pnpm\n- 提交前跑 npm test',
+      'ws.ancestors': '沿用上层',
+      'ws.noAncestors': '没有上层工作区。',
+      'ws.inheritLabel': '沿用「%s」的守则',
+      'ws.readonly': '上层守则由它自己维护，这里只能看。',
+      'ws.close': '关闭',
+      'ws.save': '保存',
       'dialog.enabled': '对本会话生效',
       'dialog.disabledHint': '已关闭：守则内容保留，但不会加入本会话的系统提示词。',
     }
@@ -102,10 +123,26 @@
       'dialog.empty': '(empty — nothing is injected)',
       'dialog.sessionSection': 'This session',
       'dialog.sharedSection': 'Workspace rules',
-      'dialog.sharedHint': 'Shared by every session in this workspace (same directory). Editable here only — no delete; off by default, each session must tick the box below.',
+      'dialog.sharedHint': 'Read-only preview of the workspace rules this session would inherit. Edit them in the Workspace rules panel; nothing is applied by default.',
       'dialog.sharedUnavailable': 'This session’s workspace could not be located, so only the session rules can be edited here.',
       'dialog.inheritShared': 'Apply the workspace rules to this session (off by default)',
-      'dialog.sharedPlaceholder': 'e.g.\n- This workspace uses pnpm\n- Run the tests before committing',
+      'dialog.sharedEditHint': 'Edit them from “Workspace rules” at the bottom of the sidebar.',
+      'entry.label': 'Workspace rules',
+      'entry.title': 'Rules per workspace, innermost first',
+      'ws.title': 'Workspace rules',
+      'ws.hint': 'Each workspace keeps its own rules; a child workspace can only opt into its ancestors, never edit them. Sessions do not inherit anything until they tick the box.',
+      'ws.empty': 'No workspace is registered yet.',
+      'ws.loadFailed': 'Could not load',
+      'ws.saveFailed': 'Could not save',
+      'ws.saved': 'Saved.',
+      'ws.own': 'Rules for this workspace',
+      'ws.ownPlaceholder': 'e.g.\n- This workspace uses pnpm\n- Run the tests before committing',
+      'ws.ancestors': 'Inherited from',
+      'ws.noAncestors': 'No parent workspace.',
+      'ws.inheritLabel': 'Inherit “%s”',
+      'ws.readonly': 'Owned by that workspace — read-only here.',
+      'ws.close': 'Close',
+      'ws.save': 'Save',
       'dialog.enabled': 'Apply to this session',
       'dialog.disabledHint': 'Off — the rules are kept but not added to this session’s system prompt.',
     }
@@ -250,6 +287,37 @@
       return next
     }
 
+  const checkbox = (key, checked, onChange, label) =>
+    h(
+      'label',
+      {
+        key,
+        style: {
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          margin: '0 0 10px',
+          fontSize: 13,
+          cursor: 'pointer',
+          userSelect: 'none',
+        },
+      },
+      h('input', {
+        type: 'checkbox',
+        checked,
+        onChange: (event) => onChange(event.target.checked),
+        style: { width: 14, height: 14, accentColor: 'var(--dsw-alias-brand-primary, #0969da)', cursor: 'pointer' },
+      }),
+      h('span', null, label),
+    )
+
+  const sectionTitle = (key, label, extra?) =>
+    h(
+      'p',
+      { key, style: { ...bodyStyle, fontWeight: 600, margin: extra === undefined ? '0 0 6px' : extra } },
+      label,
+    )
+
     function EditorDialog(props) {
       const seat = props.seat
       const sessionId = props.sessionId
@@ -257,8 +325,6 @@
       // The shared block belongs to this session's workspace; the host resolves
       // and owns that store key. `shared === null` means it cannot be located.
       const [shared, setShared] = React.useState(null)
-      const [sharedRules, setSharedRules] = React.useState('')
-      const [sharedSources, setSharedSources] = React.useState([])
       const [rules, setRules] = React.useState('')
       const [sources, setSources] = React.useState([])
       const [enabled, setEnabled] = React.useState(false)
@@ -280,8 +346,6 @@
         setRules('')
         setSources([])
         setShared(null)
-        setSharedRules('')
-        setSharedSources([])
         fetch(`${ENDPOINT}?sessionId=${encodeURIComponent(sessionId)}`, { credentials: 'same-origin' })
           .then((res) => res.json())
           .then((body) => {
@@ -293,9 +357,11 @@
             setInherit(body.inherit === true)
             const scope = body.shared
             if (scope !== null && typeof scope === 'object') {
-              setShared({ workspace: typeof scope.workspace === 'string' ? scope.workspace : '' })
-              setSharedRules(typeof scope.rules === 'string' ? scope.rules : '')
-              setSharedSources(Array.isArray(scope.sources) ? scope.sources : [])
+              setShared({
+                path: typeof scope.path === 'string' ? scope.path : '',
+                title: typeof scope.title === 'string' ? scope.title : '',
+                rules: typeof scope.rules === 'string' ? scope.rules : '',
+              })
             }
           })
           .catch((cause) => {
@@ -351,9 +417,6 @@
               sources,
               enabled,
               inherit,
-              // Present only when the workspace could be located; the host also
-              // re-derives the workspace key on its own.
-              ...(shared === null ? {} : { sharedRules, sharedSources }),
             }),
           })
           const body = await res.json()
@@ -453,37 +516,6 @@
         reviewChildren.push(panel('candidate', t('dialog.candidate'), review.candidate, true))
       }
 
-      const checkbox = (key, checked, onChange, label) =>
-        h(
-          'label',
-          {
-            key,
-            style: {
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              margin: '0 0 10px',
-              fontSize: 13,
-              cursor: 'pointer',
-              userSelect: 'none',
-            },
-          },
-          h('input', {
-            type: 'checkbox',
-            checked,
-            onChange: (event) => onChange(event.target.checked),
-            style: { width: 14, height: 14, accentColor: 'var(--dsw-alias-brand-primary, #0969da)', cursor: 'pointer' },
-          }),
-          h('span', null, label),
-        )
-
-      const sectionTitle = (key, label, extra?) =>
-        h(
-          'p',
-          { key, style: { ...bodyStyle, fontWeight: 600, margin: extra === undefined ? '0 0 6px' : extra } },
-          label,
-        )
-
       const sharedBlock =
         shared === null
           ? h('p', { key: 'noShared', style: { ...bodyStyle, margin: '14px 0 0' } }, t('dialog.sharedUnavailable'))
@@ -492,28 +524,27 @@
               { key: 'sharedBlock', style: { margin: '14px 0 0' } },
               sectionTitle(
                 'sharedTitle',
-                shared.workspace === ''
-                  ? t('dialog.sharedSection')
-                  : `${t('dialog.sharedSection')} — ${shared.workspace}`,
+                shared.title === '' ? t('dialog.sharedSection') : `${t('dialog.sharedSection')} — ${shared.title}`,
               ),
               h('p', { key: 'sharedHint', style: { ...bodyStyle, margin: '0 0 10px' } }, t('dialog.sharedHint')),
               checkbox('inherit', inherit, setInherit, t('dialog.inheritShared')),
-              h('textarea', {
-                key: 'sharedEditor',
-                value: sharedRules,
-                placeholder: t('dialog.sharedPlaceholder'),
-                spellCheck: false,
-                rows: 8,
-                onChange: (event) => setSharedRules(normalizeBullets(event.target.value)),
-                style: textareaStyle,
-              }),
-              sharedSources.length > 0
-                ? h(
-                    'p',
-                    { key: 'sharedSources', style: { ...bodyStyle, margin: '8px 0 0' } },
-                    `${t('dialog.sources')}${sharedSources.join('、')}`,
-                  )
-                : null,
+              h(
+                'pre',
+                {
+                  key: 'sharedPreview',
+                  style: {
+                    ...textareaStyle,
+                    minHeight: 0,
+                    maxHeight: 180,
+                    overflow: 'auto',
+                    margin: 0,
+                    whiteSpace: 'pre-wrap',
+                    color: shared.rules === '' ? 'var(--dsw-alias-text-secondary, #57606a)' : undefined,
+                  },
+                },
+                shared.rules === '' ? t('dialog.empty') : shared.rules,
+              ),
+              h('p', { key: 'sharedEditHint', style: { ...bodyStyle, margin: '8px 0 0' } }, t('dialog.sharedEditHint')),
             )
 
       const children = review !== null ? reviewChildren : [
@@ -652,6 +683,235 @@
       )
     }
 
+    // Workspace rules are per directory: the host stores them under the
+    // absolute path and derives the hierarchy from path prefixes, so the dialog
+    // only shows what the registry already knows.
+    function WorkspaceDialog(props) {
+      const seat = props.seat
+      const t = (key) => resolveText(seat, key)
+      const [items, setItems] = React.useState(null)
+      const [selected, setSelected] = React.useState('')
+      const [rules, setRules] = React.useState('')
+      const [inherit, setInherit] = React.useState([])
+      const [loading, setLoading] = React.useState(true)
+      const [busy, setBusy] = React.useState(false)
+      const [error, setError] = React.useState(null)
+      const [note, setNote] = React.useState(null)
+
+      function pickFrom(list, workspacePath) {
+        const item = list.find((candidate) => candidate.path === workspacePath)
+        if (item === undefined) return
+        setSelected(item.path)
+        setRules(typeof item.rules === 'string' ? item.rules : '')
+        setInherit(Array.isArray(item.inherit) ? item.inherit : [])
+        setError(null)
+        setNote(null)
+      }
+
+      React.useEffect(() => {
+        let cancelled = false
+        fetch(`${ENDPOINT}?workspaces=1`, { credentials: 'same-origin' })
+          .then((res) => res.json())
+          .then((body) => {
+            if (cancelled) return
+            if (!body || body.ok !== true) throw new Error(body?.error ?? 'invalid response')
+            const list = Array.isArray(body.workspaces) ? body.workspaces : []
+            setItems(list)
+            if (list.length > 0) pickFrom(list, list[0].path)
+          })
+          .catch((cause) => {
+            if (!cancelled) setError(`${t('ws.loadFailed')}: ${String(cause?.message ?? cause)}`)
+          })
+          .finally(() => {
+            if (!cancelled) setLoading(false)
+          })
+        return () => {
+          cancelled = true
+        }
+      }, [])
+
+      async function save() {
+        if (selected === '') return
+        setBusy(true)
+        setError(null)
+        setNote(null)
+        try {
+          const res = await fetch(ENDPOINT, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ action: 'save-workspace', path: selected, rules, inherit }),
+          })
+          const body = await res.json()
+          if (!body || body.ok !== true) throw new Error(body?.error ?? `HTTP ${res.status}`)
+          setItems((previous) =>
+            previous === null ? previous : previous.map((item) => (item.path === selected ? { ...item, rules, inherit } : item)),
+          )
+          setNote(t('ws.saved'))
+        } catch (cause) {
+          setError(`${t('ws.saveFailed')}: ${String(cause?.message ?? cause)}`)
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      // Shallowest first, so a child always lists under its parent.
+      const list =
+        items === null
+          ? []
+          : [...items].sort(
+              (left, right) =>
+                (left.ancestors?.length ?? 0) - (right.ancestors?.length ?? 0) || left.path.localeCompare(right.path),
+            )
+      const current = items === null ? undefined : items.find((item) => item.path === selected)
+
+      const rows = list.map((item) => {
+        const depth = Array.isArray(item.ancestors) ? item.ancestors.length : 0
+        const active = item.path === selected
+        return h(
+          'button',
+          {
+            key: item.path,
+            type: 'button',
+            onClick: () => pickFrom(items, item.path),
+            style: {
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'flex-start',
+              gap: 2,
+              width: '100%',
+              padding: '6px 8px',
+              paddingLeft: 8 + depth * 14,
+              border: 'none',
+              borderRadius: 6,
+              textAlign: 'left',
+              cursor: 'pointer',
+              font: 'inherit',
+              color: 'inherit',
+              background: active ? 'var(--dsw-alias-bg-tertiary, #eef1f4)' : 'transparent',
+            },
+          },
+          h('span', { style: { fontSize: 13, fontWeight: active ? 600 : 400 } }, item.title),
+          h('span', { style: { ...bodyStyle, fontSize: 11 } }, item.path),
+        )
+      })
+
+      const ancestors = current !== undefined && Array.isArray(current.ancestors) ? current.ancestors : []
+      const ancestorRows = ancestors.map((ancestor) => {
+        const source = items.find((item) => item.path === ancestor.path)
+        const text = source === undefined ? '' : source.rules
+        return h(
+          'div',
+          { key: ancestor.path, style: { margin: '0 0 10px' } },
+          checkbox(
+            `inherit:${ancestor.path}`,
+            inherit.includes(ancestor.path),
+            (checked) =>
+              setInherit((previous) =>
+                checked ? [...new Set([...previous, ancestor.path])] : previous.filter((item) => item !== ancestor.path),
+              ),
+            t('ws.inheritLabel').replace('%s', ancestor.title),
+          ),
+          h(
+            'pre',
+            {
+              style: {
+                ...textareaStyle,
+                minHeight: 0,
+                maxHeight: 120,
+                overflow: 'auto',
+                margin: '0 0 4px',
+                whiteSpace: 'pre-wrap',
+              },
+            },
+            text === '' ? t('dialog.empty') : text,
+          ),
+          h('p', { key: 'own', style: { ...bodyStyle, margin: 0 } }, t('ws.readonly')),
+        )
+      })
+
+      const children = [
+        h('p', { key: 'hint', style: { ...bodyStyle, margin: '0 0 10px' } }, t('ws.hint')),
+        items === null
+          ? loading
+            ? null
+            : h('p', { key: 'empty', style: bodyStyle }, t('ws.empty'))
+          : h(
+              'div',
+              { key: 'main', style: { display: 'flex', gap: 12, alignItems: 'flex-start' } },
+              h(
+                'div',
+                {
+                  key: 'list',
+                  style: {
+                    width: 210,
+                    flex: '0 0 auto',
+                    maxHeight: 340,
+                    overflow: 'auto',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 2,
+                    paddingRight: 8,
+                    borderRight: '1px solid var(--dsw-alias-border-secondary, #d0d7de)',
+                  },
+                },
+                rows,
+              ),
+              h(
+                'div',
+                { key: 'detail', style: { flex: 1, minWidth: 0 } },
+                sectionTitle('ownTitle', t('ws.own')),
+                h('textarea', {
+                  key: 'ownArea',
+                  value: rules,
+                  placeholder: t('ws.ownPlaceholder'),
+                  spellCheck: false,
+                  rows: 10,
+                  onChange: (event) => setRules(normalizeBullets(event.target.value)),
+                  style: { ...textareaStyle, minHeight: 140 },
+                }),
+                h('p', { key: 'ancTitle', style: { ...bodyStyle, fontWeight: 600, margin: '12px 0 6px' } }, t('ws.ancestors')),
+                ancestorRows.length === 0 ? h('p', { key: 'noAnc', style: bodyStyle }, t('ws.noAncestors')) : ancestorRows,
+              ),
+            ),
+      ].filter((item) => item !== null)
+      if (error !== null) children.push(h('p', { key: 'error', style: { ...errorStyle, margin: '8px 0 0' } }, error))
+      else if (note !== null) children.push(h('p', { key: 'note', style: { ...goodStyle, margin: '8px 0 0' } }, note))
+
+      return h(
+        Modal,
+        {
+          open: true,
+          onClose: props.onClose,
+          title: t('ws.title'),
+          closeLabel: t('ws.close'),
+          footer: [
+            h(Button, { key: 'close', variant: 'outline', size: 'sm', onClick: props.onClose }, t('ws.close')),
+            h(Button, { key: 'save', variant: 'outline', size: 'sm', onClick: save, disabled: busy || loading || selected === '' }, busy ? t('ws.saved') : t('ws.save')),
+          ],
+        },
+        children,
+      )
+    }
+
+    // Footer seat: a plain list slot, so this never collides with the built-in
+    // workspace browser (a `single` slot) or its hard-coded "..." menu.
+    function WorkspaceEntry(props) {
+      const seat = seatOf(props)
+      const [open, setOpen] = React.useState(false)
+      const t = (key) => resolveText(seat, key)
+      return h(
+        React.Fragment,
+        null,
+        h(
+          Button,
+          { variant: 'outline', size: 'sm', title: t('entry.title'), onClick: () => setOpen(true) },
+          t('entry.label'),
+        ),
+        open ? h(WorkspaceDialog, { seat, onClose: () => setOpen(false) }) : null,
+      )
+    }
+
     function DialogHost(props) {
       const current = useRequest()
       if (current === null) return null
@@ -676,6 +936,9 @@
               },
             }),
           }, MenuItem),
+        )
+        ctx.slots.inject(FOOTER_SLOT, () =>
+          ctx.slots.register({ name: FOOTER_SLOT, id: ENTRY_ID, order: 20, locale: NS }, WorkspaceEntry),
         )
         ctx.slots.inject(OVERLAY_SLOT, () =>
           ctx.slots.register({ name: OVERLAY_SLOT, id: DIALOG_ID, order: 100, locale: NS }, DialogHost),

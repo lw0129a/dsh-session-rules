@@ -85,35 +85,89 @@ function idCandidates(sessionId) {
   return [...new Set([sessionId, bare, `session-${bare}`])]
 }
 
-// Shared rules live under one store key per workspace directory, so every
-// session started in the same workspace edits the same block.
-function sharedKey(dirName) {
-  return `ws:${dirName}`
+// --- workspaces -------------------------------------------------------------
+// A workspace's rules are stored under `ws:<absolute path>`; nesting comes from
+// the paths themselves (a registered workspace that prefixes another one is its
+// parent), and each level opts into ancestors explicitly.
+
+function workspaceRegistry() {
+  const file = path.join(dshHome(), 'storages', 'workspace.json')
+  let parsed
+  try {
+    parsed = JSON.parse(readFileSync(file, 'utf8'))
+  } catch {
+    return []
+  }
+  const table = parsed?.tables?.workspaces
+  if (table === null || typeof table !== 'object') return []
+  const byPath = new Map()
+  for (const value of Object.values(table)) {
+    if (value === null || typeof value !== 'object') continue
+    const item = value as any
+    const workspacePath = typeof item.path === 'string' ? item.path.trim() : ''
+    if (workspacePath === '' || byPath.has(workspacePath)) continue
+    byPath.set(workspacePath, {
+      path: workspacePath,
+      title:
+        typeof item.title === 'string' && item.title !== '' ? item.title : path.basename(workspacePath),
+      sessionIds: Array.isArray(item.sessionIds)
+        ? item.sessionIds.filter((id) => typeof id === 'string')
+        : [],
+    })
+  }
+  return [...byPath.values()].sort((left, right) => left.path.localeCompare(right.path))
 }
 
-// Evaluated at every prompt assembly: a broken store must never take prompt
-// assembly down, so failures fall back to "no rules".
-// Order: this workspace's shared rules first, then this session's own. A
-// session opts into the shared ones with its `inherit` flag.
-function rulesFor(sessionId) {
-  if (!isSessionId(sessionId)) return ''
-  try {
-    const store = readStore()
-    const own = ownEntry(store, sessionId)
-    const parts = []
-    if (own.inherit) {
-      const workspace = workspaceEntry(sessionId)
-      if (workspace !== undefined) parts.push(sharedText(entryOf(store, workspace.key)))
-    }
-    if (own.enabled) parts.push(activeRules(own))
-    return parts.filter((part) => part !== '').join('\n\n')
-  } catch {
-    return ''
+function workspaceKey(workspacePath) {
+  return `ws:${workspacePath}`
+}
+
+function workspaceEntryOf(store, workspacePath) {
+  const raw = store[workspaceKey(workspacePath)]
+  return {
+    rules: typeof raw?.rules === 'string' ? raw.rules : '',
+    sources: Array.isArray(raw?.sources)
+      ? raw.sources.filter((item) => typeof item === 'string')
+      : [],
+    // Registered ancestor workspaces this level draws rules from. Empty means
+    // "this level stands alone" and is the default.
+    inherit: Array.isArray(raw?.inherit)
+      ? raw.inherit.filter((item) => typeof item === 'string')
+      : [],
   }
 }
 
-// Shared rules have no switch of their own: `inherit` on the session decides,
-// and an empty block injects nothing.
+function ancestorsOf(workspacePath) {
+  return workspaceRegistry()
+    .filter(
+      (item) =>
+        item.path !== workspacePath &&
+        workspacePath.startsWith(item.path.endsWith('/') ? item.path : `${item.path}/`),
+    )
+    .sort((left, right) => left.path.length - right.path.length)
+}
+
+// What a session in this workspace actually receives: the ancestors it opted
+// into (outermost first), then the workspace's own block.
+function workspaceRulesOf(store, workspacePath) {
+  const entry = workspaceEntryOf(store, workspacePath)
+  const inherited = ancestorsOf(workspacePath)
+    .filter((item) => entry.inherit.includes(item.path))
+    .map((item) => sharedText(workspaceEntryOf(store, item.path)))
+  return [...inherited, sharedText(entry)].filter((part) => part !== '').join('\n\n')
+}
+
+function workspaceForSession(sessionId) {
+  const candidates = idCandidates(sessionId)
+  for (const item of workspaceRegistry()) {
+    if (item.sessionIds.some((id) => candidates.includes(id))) return item
+  }
+  // Sessions whose workspace has been archived still sit in the sessions tree.
+  const legacy = workspaceEntry(sessionId)
+  if (legacy === undefined) return undefined
+  return { path: legacy.label, title: path.basename(legacy.label) }
+}
+
 function sharedText(entry) {
   return entry.rules.trim()
 }
@@ -124,6 +178,20 @@ function activeRules(entry) {
 
 function ownEntry(store, sessionId) {
   return entryOf(store, keyFor(store, sessionId))
+}
+
+// The text injected for a session: the workspace's rules (only when the
+// session opted in), then the session's own rules (only when enabled).
+function rulesFor(sessionId) {
+  const store = readStore()
+  const own = ownEntry(store, sessionId)
+  const parts = []
+  if (own.inherit) {
+    const workspace = workspaceForSession(sessionId)
+    if (workspace !== undefined) parts.push(workspaceRulesOf(store, workspace.path))
+  }
+  if (own.enabled) parts.push(activeRules(own))
+  return parts.filter((part) => part !== '').join('\n\n')
 }
 
 function storeKey(store, sessionId) {
@@ -215,15 +283,17 @@ function workspaceEntry(sessionId) {
     if (!entry.isDirectory()) continue
     for (const candidate of idCandidates(sessionId)) {
       if (existsSync(path.join(root, entry.name, candidate))) {
-        return { key: sharedKey(entry.name), label: decodeWorkspace(entry.name) ?? entry.name }
+        return { label: decodeWorkspace(entry.name) ?? entry.name }
       }
     }
   }
   return undefined
 }
 
+// Absolute path when the workspace registry knows the session, otherwise the
+// sessions-tree label (which may be an encoded directory name).
 function workspaceOf(sessionId) {
-  return workspaceEntry(sessionId)?.label
+  return workspaceForSession(sessionId)?.path ?? workspaceEntry(sessionId)?.label
 }
 
 function readCapped(file) {
@@ -324,6 +394,27 @@ async function handleRequest(ctx, req, res) {
   }
 
   if (req.method === 'GET') {
+    if (url.searchParams.get('workspaces') === '1') {
+      const store = readStore()
+      sendJson(res, 200, {
+        ok: true,
+        workspaces: workspaceRegistry().map((item) => {
+          const entry = workspaceEntryOf(store, item.path)
+          return {
+            path: item.path,
+            title: item.title,
+            rules: entry.rules,
+            sources: entry.sources,
+            inherit: entry.inherit,
+            ancestors: ancestorsOf(item.path).map((ancestor) => ({
+              path: ancestor.path,
+              title: ancestor.title,
+            })),
+          }
+        }),
+      })
+      return
+    }
     const sessionId = url.searchParams.get('sessionId') ?? ''
     if (!isSessionId(sessionId)) {
       sendJson(res, 400, { ok: false, error: 'sessionId is required' })
@@ -331,7 +422,7 @@ async function handleRequest(ctx, req, res) {
     }
     const store = readStore()
     const entry = entryOf(store, storeKey(store, sessionId))
-    const workspace = workspaceEntry(sessionId)
+    const workspace = workspaceForSession(sessionId)
     const body: any = {
       ok: true,
       sessionId,
@@ -340,17 +431,17 @@ async function handleRequest(ctx, req, res) {
       enabled: entry.enabled,
       inherit: entry.inherit,
       // null when the session's workspace cannot be located: the dialog then
-      // hides the shared editor instead of writing to a guessed key.
+      // hides the workspace block instead of writing to a guessed key.
       shared:
         workspace === undefined
           ? null
           : {
-              workspace: workspace.label,
-              rules: entryOf(store, workspace.key).rules,
-              sources: entryOf(store, workspace.key).sources,
+              path: workspace.path,
+              title: workspace.title,
+              rules: workspaceRulesOf(store, workspace.path),
             },
     }
-    if (url.searchParams.get('candidates') === '1' && isSessionId(sessionId)) body.files = projectFiles(sessionId)
+    if (url.searchParams.get('candidates') === '1') body.files = projectFiles(sessionId)
     sendJson(res, 200, body)
     return
   }
@@ -387,6 +478,40 @@ async function handleRequest(ctx, req, res) {
     return
   }
 
+  if (payload?.action === 'save-workspace') {
+    const workspacePath = typeof payload?.path === 'string' ? payload.path.trim() : ''
+    if (workspacePath === '' || !workspaceRegistry().some((item) => item.path === workspacePath)) {
+      sendJson(res, 404, { ok: false, error: 'unknown workspace' })
+      return
+    }
+    const sharedRules = typeof payload?.rules === 'string' ? payload.rules : ''
+    if (sharedRules.length > 100000) {
+      sendJson(res, 413, { ok: false, error: 'rules too long' })
+      return
+    }
+    const rawSources = Array.isArray(payload?.sources) ? payload.sources : []
+    const sources = rawSources
+      .filter((item) => typeof item === 'string' && item.length <= 500)
+      .slice(0, 100)
+    // Only registered ancestors may be opted into, so a crafted body cannot
+    // pull in an arbitrary path.
+    const registered = ancestorsOf(workspacePath).map((item) => item.path)
+    const rawInherit = Array.isArray(payload?.inherit) ? payload.inherit : []
+    const inherit = rawInherit
+      .filter((item) => typeof item === 'string' && registered.includes(item))
+      .slice(0, 50)
+    const store = readStore()
+    store[workspaceKey(workspacePath)] = {
+      rules: sharedRules,
+      sources,
+      inherit,
+      updatedAt: new Date().toISOString(),
+    }
+    writeStore(store)
+    sendJson(res, 200, { ok: true })
+    return
+  }
+
   const sessionId = typeof payload?.sessionId === 'string' ? payload.sessionId.trim() : ''
   if (!isSessionId(sessionId)) {
     sendJson(res, 400, { ok: false, error: 'sessionId is required' })
@@ -402,23 +527,8 @@ async function handleRequest(ctx, req, res) {
   const rawSources = Array.isArray(payload?.sources) ? payload.sources : []
   const sources = rawSources.filter((item) => typeof item === 'string' && item.length <= 500).slice(0, 100)
 
-  // The workspace key is derived here, never taken from the client, so a
-  // crafted body cannot write another workspace's block.
-  const hasShared = Object.prototype.hasOwnProperty.call(payload, 'sharedRules')
-  const sharedRules = typeof payload?.sharedRules === 'string' ? payload.sharedRules : ''
-  if (sharedRules.length > 100000) {
-    sendJson(res, 413, { ok: false, error: 'shared rules too long' })
-    return
-  }
-  const rawSharedSources = Array.isArray(payload?.sharedSources) ? payload.sharedSources : []
-  const sharedSources = rawSharedSources.filter((item) => typeof item === 'string' && item.length <= 500).slice(0, 100)
-  const workspace = workspaceEntry(sessionId)
-
   const store = readStore()
   store[storeKey(store, sessionId)] = { rules, sources, enabled, inherit, updatedAt: new Date().toISOString() }
-  if (hasShared && workspace !== undefined) {
-    store[workspace.key] = { rules: sharedRules, sources: sharedSources, updatedAt: new Date().toISOString() }
-  }
   try {
     writeStore(store)
   } catch (error) {
@@ -433,7 +543,7 @@ async function handleRequest(ctx, req, res) {
     sources,
     enabled,
     inherit,
-    shared: workspace === undefined ? null : { workspace: workspace.label, rules: sharedRules, sources: sharedSources },
+    shared: null,
   })
 }
 
@@ -481,5 +591,9 @@ export const __test = {
   projectFiles,
   workspaceOf,
   workspaceEntry,
+  workspaceRegistry,
+  workspaceRulesOf,
+  ancestorsOf,
+  workspaceForSession,
   optimizeRules,
 }
