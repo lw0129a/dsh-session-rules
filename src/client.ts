@@ -21,10 +21,9 @@
     // `sidebar.workspaces` is a `single` slot owned by the built-in browser, and
     // the workspace "..." menu is hard-coded, so the workspace editor hangs off
     // the footer action list (a `list` slot: any number of plugins may join).
-    const FOOTER_SLOT = 'sidebar.footer.action'
     const MENU_ID = 'session-rules.menu'
     const DIALOG_ID = 'session-rules.dialog'
-    const ENTRY_ID = 'session-rules.workspace-entry'
+    const WORKSPACE_DIALOG_ID = 'session-rules.workspace-dialog'
     const ENDPOINT = '/__chameleon/session/rules'
     // The workspace "..." menu has no extension slot, so a DOM enhancer adds one
     // entry to it; the click lands here and the footer dialog opens on that
@@ -83,9 +82,7 @@
       'dialog.sharedUnavailable': '未能识别本会话的工作区，本次只能编辑本会话守则。',
       'dialog.inheritShared': '对本会话启用工作区守则（默认关闭）',
       'dialog.sharedEditHint': '要改这些内容，用侧边栏底部的「工作区守则」。',
-      'entry.label': '工作区守则',
       'menu.workspace': '会话守则',
-      'entry.title': '按下层→上层为每个工作区维护守则',
       'ws.title': '工作区守则',
       'ws.hint': '每个工作区可以写一份守则；子工作区只能勾选是否沿用上层，不能改上层内容。会话里默认不带入，需要各自勾选启用。',
       'ws.empty': '还没有登记任何工作区。',
@@ -145,9 +142,7 @@
       'dialog.sharedUnavailable': 'This session’s workspace could not be located, so only the session rules can be edited here.',
       'dialog.inheritShared': 'Apply the workspace rules to this session (off by default)',
       'dialog.sharedEditHint': 'Edit them from “Workspace rules” at the bottom of the sidebar.',
-      'entry.label': 'Workspace rules',
       'menu.workspace': 'Session rules',
-      'entry.title': 'Rules per workspace, innermost first',
       'ws.title': 'Workspace rules',
       'ws.hint': 'Each workspace keeps its own rules; a child workspace can only opt into its ancestors, never edit them. Sessions do not inherit anything until they tick the box.',
       'ws.empty': 'No workspace is registered yet.',
@@ -1056,13 +1051,12 @@
       }
     }
 
-    // Footer seat: a plain list slot, so this never collides with the built-in
-    // workspace browser (a `single` slot) or its hard-coded "..." menu.
-    function WorkspaceEntry(props) {
+    // Opens from the workspace row's "..." menu (see the DOM enhancer below);
+    // there is no persistent sidebar button.
+    function WorkspaceHost(props) {
       const seat = seatOf(props)
       const [open, setOpen] = React.useState(false)
       const [initialPath, setInitialPath] = React.useState('')
-      const t = (key) => resolveText(seat, key)
       React.useEffect(
         () =>
           workspacePicker.subscribe((workspacePath) => {
@@ -1071,16 +1065,7 @@
           }),
         [],
       )
-      return h(
-        React.Fragment,
-        null,
-        h(
-          Button,
-          { variant: 'outline', size: 'sm', title: t('entry.title'), onClick: () => setOpen(true) },
-          t('entry.label'),
-        ),
-        open ? h(WorkspaceDialog, { seat, initialPath, onClose: () => setOpen(false) }) : null,
-      )
+      return open ? h(WorkspaceDialog, { seat, initialPath, onClose: () => setOpen(false) }) : null
     }
 
     function DialogHost(props) {
@@ -1108,8 +1093,8 @@
             }),
           }, MenuItem),
         )
-        ctx.slots.inject(FOOTER_SLOT, () =>
-          ctx.slots.register({ name: FOOTER_SLOT, id: ENTRY_ID, order: 20, locale: NS }, WorkspaceEntry),
+        ctx.slots.inject(OVERLAY_SLOT, () =>
+          ctx.slots.register({ name: OVERLAY_SLOT, id: WORKSPACE_DIALOG_ID, order: 110, locale: NS }, WorkspaceHost),
         )
         ctx.slots.inject(OVERLAY_SLOT, () =>
           ctx.slots.register({ name: OVERLAY_SLOT, id: DIALOG_ID, order: 100, locale: NS }, DialogHost),
