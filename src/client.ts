@@ -259,7 +259,7 @@
       const targetId = scope === 'global' ? '*' : sessionId
       const [rules, setRules] = React.useState('')
       const [sources, setSources] = React.useState([])
-      const [enabled, setEnabled] = React.useState(true)
+      const [enabled, setEnabled] = React.useState(false)
       const [inherit, setInherit] = React.useState(false)
       const [loading, setLoading] = React.useState(true)
       const [busy, setBusy] = React.useState(false)
@@ -284,7 +284,7 @@
             if (!body || body.ok !== true) throw new Error(body?.error ?? 'invalid response')
             setRules(typeof body.rules === 'string' ? body.rules : '')
             setSources(Array.isArray(body.sources) ? body.sources : [])
-            setEnabled(body.enabled !== false)
+            setEnabled(body.enabled === true)
             setInherit(body.inherit === true)
           })
           .catch((cause) => {
