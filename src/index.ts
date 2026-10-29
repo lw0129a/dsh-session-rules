@@ -22,19 +22,6 @@ const ROUTE_PATH = '/__chameleon/session/rules'
 const SECTION_NAME = 'session-rules'
 const SECTION_ORDER = 10190
 const MAX_BODY = 1e6
-const MAX_IMPORT = 20000
-
-// Files a project may already use to state its conventions. Read-only: the
-// import copies text into the session store and never writes these files.
-const PROJECT_FILES = [
-  'AGENTS.md',
-  'CLAUDE.md',
-  'GEMINI.md',
-  '.cursorrules',
-  '.github/copilot-instructions.md',
-  'docs/AGENTS.md',
-]
-
 function dshHome() {
   return process.env.DSH_HOME || path.join(homedir(), '.dsh')
 }
@@ -43,52 +30,89 @@ function storeFile() {
   return path.join(dshHome(), 'plugin-data', 'dsh-session-rules', 'rules.json')
 }
 
-function readStore() {
-  let parsed
+// A cached copy of the store, refreshed only when the file changes. Prompt
+// assembly runs on every turn, so re-reading and re-pruning the JSON each time
+// is wasted work: the stamp below makes the common path zero disk reads.
+let storeCache = null
+let registryCache = null
+
+function fileStamp(file) {
   try {
-    parsed = JSON.parse(readFileSync(storeFile(), 'utf8'))
+    const info = statSync(file)
+    return `${info.mtimeMs}:${info.size}`
   } catch {
-    return {}
+    return ''
   }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-  return migrateStore(parsed)
 }
 
-// Older builds keyed workspace blocks by the encoded sessions directory
-// (`ws:--Users-lw-dev--`). Rewrite those to `ws:<absolute path>` so every level
-// of the hierarchy lives under one naming scheme; merge when both exist.
-function migrateStore(store) {
-  const legacy = Object.keys(store).filter((key) => {
-    if (!key.startsWith('ws:') || key.startsWith('ws:/')) return false
-    return decodeWorkspace(key.slice(3)) !== undefined
-  })
-  if (legacy.length === 0) return store
-  for (const key of legacy) {
-    const target = workspaceKey(decodeWorkspace(key.slice(3)))
-    const entry = store[key]
-    const previous = store[target]
-    if (previous === undefined || previous === null || typeof previous !== 'object') {
-      store[target] = entry
-    } else {
-      const rules = [previous.rules, entry?.rules]
-        .filter((text) => typeof text === 'string' && text.trim() !== '')
-        .join('\n\n')
-      const inherit = [
-        ...new Set([
-          ...(Array.isArray(previous.inherit) ? previous.inherit : []),
-          ...(Array.isArray(entry?.inherit) ? entry.inherit : []),
-        ]),
-      ]
-      store[target] = { ...previous, rules, inherit, updatedAt: new Date().toISOString() }
-    }
-    delete store[key]
-  }
+function readStore() {
+  const file = storeFile()
+  const stamp = fileStamp(file)
+  if (storeCache !== null && storeCache.stamp === stamp) return storeCache.store
+  let parsed
   try {
-    writeStore(store)
+    parsed = JSON.parse(readFileSync(file, 'utf8'))
   } catch {
-    // A read must never fail because the rewrite could not be persisted.
+    storeCache = { stamp, store: {} }
+    return storeCache.store
   }
+  const store = parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  // Prune on reload only: this is the one path that sees changes made behind
+  // our back, and a directory walk per turn is exactly what we are avoiding.
+  if (pruneStore(store)) {
+    try {
+      writeStore(store)
+    } catch {
+      // A read must never fail because the prune could not be persisted.
+    }
+  }
+  storeCache = { stamp: fileStamp(file), store }
   return store
+}
+
+// Drop blocks whose workspace was deleted or whose session no longer exists.
+// Runs whenever the store is reloaded, so deletions need no event from DSH. An empty registry
+// or an unreadable sessions tree means "cannot tell yet", never "all gone".
+function pruneStore(store) {
+  const workspacePaths = new Set(workspaceRegistry().map((item) => item.path))
+  const live = liveSessionIds()
+  let changed = false
+  for (const key of Object.keys(store)) {
+    if (key.startsWith('ws:')) {
+      if (workspacePaths.size > 0 && !workspacePaths.has(key.slice(3))) {
+        delete store[key]
+        changed = true
+      }
+      continue
+    }
+    if (live !== null && !live.some((id) => idCandidates(key).includes(id))) {
+      delete store[key]
+      changed = true
+    }
+  }
+  return changed
+}
+
+function liveSessionIds() {
+  const root = path.join(dshHome(), 'sessions')
+  let workspaces
+  try {
+    workspaces = readdirSync(root, { withFileTypes: true })
+  } catch {
+    return null
+  }
+  const ids = []
+  let seen = 0
+  for (const workspace of workspaces) {
+    if (!workspace.isDirectory()) continue
+    seen += 1
+    try {
+      for (const entry of readdirSync(path.join(root, workspace.name))) ids.push(entry)
+    } catch {
+      // Skip a workspace directory that cannot be listed.
+    }
+  }
+  return seen === 0 ? null : ids
 }
 
 function writeStore(store) {
@@ -97,20 +121,29 @@ function writeStore(store) {
   const temp = `${file}.${process.pid}.tmp`
   writeFileSync(temp, `${JSON.stringify(store, null, 2)}\n`, 'utf8')
   renameSync(temp, file)
+  storeCache = { stamp: fileStamp(file), store }
+}
+
+// One shape for both stores: session blocks and workspace blocks differ only
+// in which switches they carry, and a missing switch reads as "off".
+function readEntry(raw) {
+  return {
+    rules: typeof raw?.rules === 'string' ? raw.rules : '',
+    sources: Array.isArray(raw?.sources) ? raw.sources.filter((item) => typeof item === 'string') : [],
+    // Every switch starts off: saved text is inert until the user enables it.
+    enabled: raw?.enabled === true,
+    // Levels this block pulls in. Empty = nothing inherited. A stored `true` is
+    // the pre-0.7 boolean and means "the whole chain".
+    inherit: Array.isArray(raw?.inherit)
+      ? raw.inherit.filter((item) => typeof item === 'string')
+      : raw?.inherit === true
+        ? ['*']
+        : [],
+  }
 }
 
 function entryOf(store, sessionId) {
-  const entry = store[sessionId]
-  if (entry === null || typeof entry !== 'object') return { rules: '', sources: [], enabled: false, inherit: false }
-  return {
-    rules: typeof entry.rules === 'string' ? entry.rules : '',
-    sources: Array.isArray(entry.sources) ? entry.sources.filter((item) => typeof item === 'string') : [],
-    // Every switch starts off: saved text is inert until the user enables it.
-    enabled: entry.enabled === true,
-    // Per-session opt-in for the shared ('*') rules: off unless the user
-    // enabled it for this session.
-    inherit: entry.inherit === true,
-  }
+  return readEntry(store[sessionId])
 }
 
 const VALID_ID = /^[A-Za-z0-9._:-]{1,200}$/
@@ -131,14 +164,20 @@ function idCandidates(sessionId) {
 
 function workspaceRegistry() {
   const file = path.join(dshHome(), 'storages', 'workspace.json')
+  const stamp = fileStamp(file)
+  if (registryCache !== null && registryCache.stamp === stamp) return registryCache.list
   let parsed
   try {
     parsed = JSON.parse(readFileSync(file, 'utf8'))
   } catch {
-    return []
+    registryCache = { stamp, list: [] }
+    return registryCache.list
   }
   const table = parsed?.tables?.workspaces
-  if (table === null || typeof table !== 'object') return []
+  if (table === null || typeof table !== 'object') {
+    registryCache = { stamp, list: [] }
+    return registryCache.list
+  }
   const byPath = new Map()
   for (const [workspaceId, value] of Object.entries(table)) {
     if (value === null || typeof value !== 'object') continue
@@ -155,7 +194,11 @@ function workspaceRegistry() {
         : [],
     })
   }
-  return [...byPath.values()].sort((left, right) => left.path.localeCompare(right.path))
+  registryCache = {
+    stamp,
+    list: [...byPath.values()].sort((left, right) => left.path.localeCompare(right.path)),
+  }
+  return registryCache.list
 }
 
 function workspaceKey(workspacePath) {
@@ -163,54 +206,13 @@ function workspaceKey(workspacePath) {
 }
 
 function workspaceEntryOf(store, workspacePath) {
-  const raw = store[workspaceKey(workspacePath)]
-  return {
-    rules: typeof raw?.rules === 'string' ? raw.rules : '',
-    sources: Array.isArray(raw?.sources)
-      ? raw.sources.filter((item) => typeof item === 'string')
-      : [],
-    // Registered ancestor workspaces this level draws rules from. Empty means
-    // "this level stands alone" and is the default.
-    inherit: Array.isArray(raw?.inherit)
-      ? raw.inherit.filter((item) => typeof item === 'string')
-      : [],
-  }
+  return readEntry(store[workspaceKey(workspacePath)])
 }
 
-// True when `candidate` is a directory a workspace path may nest under. The
-// home directory and everything above it are never levels of their own, and
-// neither is the root: those would be noise, not project grouping.
-function usableLevel(candidate) {
-  if (candidate === '/' || candidate === '') return false
-  if (candidate.split('/').filter((part) => part !== '').length < 2) return false
-  const home = homedir()
-  if (home !== '' && (home === candidate || home.startsWith(`${candidate}/`))) return false
-  try {
-    return statSync(candidate).isDirectory()
-  } catch {
-    return false
-  }
-}
-
-// The registered workspaces, plus the directories they live under: a parent
-// folder that was never registered as a workspace is still a level, so the
-// chain stays hierarchical no matter how flat the registry is.
+// Every level of the chain is a registered workspace; which grouping the
+// sidebar uses is DSH's own view option (分组方式 → 按工作区树), not ours.
 function knownWorkspaces() {
-  const registered = workspaceRegistry()
-  const byPath = new Map()
-  for (const item of registered) byPath.set(item.path, { ...item, implicit: false })
-  for (const item of registered) {
-    let parent = path.dirname(item.path)
-    while (parent !== '/' && usableLevel(parent)) {
-      if (!byPath.has(parent)) {
-        byPath.set(parent, { path: parent, title: path.basename(parent), sessionIds: [], implicit: true })
-      }
-      const next = path.dirname(parent)
-      if (next === parent) break
-      parent = next
-    }
-  }
-  return [...byPath.values()].sort((left, right) => left.path.localeCompare(right.path))
+  return workspaceRegistry()
 }
 
 function ancestorsOf(workspacePath) {
@@ -223,25 +225,52 @@ function ancestorsOf(workspacePath) {
     .sort((left, right) => left.path.length - right.path.length)
 }
 
-// What a session in this workspace actually receives: the ancestors it opted
-// into (outermost first), then the workspace's own block.
-function workspaceRulesOf(store, workspacePath) {
-  const entry = workspaceEntryOf(store, workspacePath)
-  const inherited = ancestorsOf(workspacePath)
-    .filter((item) => entry.inherit.includes(item.path))
-    .map((item) => sharedText(workspaceEntryOf(store, item.path)))
-  return [...inherited, sharedText(entry)].filter((part) => part !== '').join('\n\n')
+// Every level a session may pull from: ancestors outermost first, then its own
+// workspace last. Paths are the identity used everywhere in the store.
+function layersOf(workspacePath, title) {
+  const rows = ancestorsOf(workspacePath).map((item) => ({ path: item.path, title: item.title }))
+  rows.push({ path: workspacePath, title: title === '' ? path.basename(workspacePath) : title })
+  return rows
 }
 
+// '\u0000' is impossible in a path, so it doubles as the "whole chain" marker
+// left behind by the old boolean switch.
+function selectedLayers(layers, inherit) {
+  if (inherit.includes('*')) return layers.map((item) => item.path)
+  return layers.filter((item) => inherit.includes(item.path)).map((item) => item.path)
+}
+
+// The text a session receives from its workspace levels, in display order.
+function sessionLayerText(store, workspacePath, title, inherit) {
+  return selectedLayers(layersOf(workspacePath, title), inherit)
+    .map((layerPath) => sharedText(workspaceEntryOf(store, layerPath)))
+    .filter((part) => part !== '')
+    .join('\n\n')
+}
+
+// ponytail: memo has no TTL — a workspace registered while the app runs is
+// picked up on the next start. The fallback walk is what makes this worth
+// caching; drop the memo if stale entries ever hurt.
+const workspaceMemo = new Map()
+
 function workspaceForSession(sessionId) {
+  if (workspaceMemo.has(sessionId)) return workspaceMemo.get(sessionId)
   const candidates = idCandidates(sessionId)
+  let found
   for (const item of workspaceRegistry()) {
-    if (item.sessionIds.some((id) => candidates.includes(id))) return item
+    if (item.sessionIds.some((id) => candidates.includes(id))) {
+      found = item
+      break
+    }
   }
-  // Sessions whose workspace has been archived still sit in the sessions tree.
-  const legacy = workspaceEntry(sessionId)
-  if (legacy === undefined) return undefined
-  return { path: legacy.label, title: path.basename(legacy.label) }
+  if (found === undefined) {
+    // Sessions whose workspace has been archived still sit in the sessions tree.
+    const legacy = workspaceEntry(sessionId)
+    if (legacy !== undefined) found = { path: legacy.label, title: path.basename(legacy.label) }
+  }
+  if (workspaceMemo.size > 500) workspaceMemo.clear()
+  workspaceMemo.set(sessionId, found)
+  return found
 }
 
 function sharedText(entry) {
@@ -262,16 +291,14 @@ function rulesFor(sessionId) {
   const store = readStore()
   const own = ownEntry(store, sessionId)
   const parts = []
-  if (own.inherit) {
+  if (own.inherit.length > 0) {
     const workspace = workspaceForSession(sessionId)
-    if (workspace !== undefined) parts.push(workspaceRulesOf(store, workspace.path))
+    if (workspace !== undefined) {
+      parts.push(sessionLayerText(store, workspace.path, workspace.title, own.inherit))
+    }
   }
   if (own.enabled) parts.push(activeRules(own))
   return parts.filter((part) => part !== '').join('\n\n')
-}
-
-function storeKey(store, sessionId) {
-  return keyFor(store, sessionId)
 }
 
 function keyFor(store, sessionId) {
@@ -374,28 +401,6 @@ function workspaceOf(sessionId) {
   return workspaceForSession(sessionId)?.path ?? workspaceEntry(sessionId)?.label
 }
 
-function readCapped(file) {
-  const text = readFileSync(file, 'utf8')
-  if (text.length <= MAX_IMPORT) return text
-  return `${text.slice(0, MAX_IMPORT)}\n…（已截断，原文件 ${text.length} 字符）`
-}
-
-function projectFiles(sessionId) {
-  const workspace = workspaceOf(sessionId)
-  if (workspace === undefined) return []
-  const files = []
-  for (const relative of PROJECT_FILES) {
-    const absolute = path.join(workspace, relative)
-    try {
-      if (!existsSync(absolute) || !statSync(absolute).isFile()) continue
-      files.push({ path: relative, content: readCapped(absolute) })
-    } catch {
-      // Unreadable file: skip it, the dialog simply does not offer it.
-    }
-  }
-  return files
-}
-
 // --- rule polishing -------------------------------------------------------
 // Optional: rewrite the user's notes as tighter, executable rules. Runs on the
 // harness LLM service, i.e. the provider/model the app itself is configured
@@ -404,7 +409,7 @@ function projectFiles(sessionId) {
 const OPTIMIZE_SYSTEM = [
   '你把用户随手写的「会话守则」整理成给编码助手看的规范。',
   '要求：保留原意和全部约束，不新增事实、不删减要求；合并重复项；',
-  '每条一句，动词开头，可执行；中文输出。',
+  '每条一句，动词开头，可执行；输出语言与原文一致。',
   '输出格式固定：每一行都是一条以「- 」开头的条目，不要小标题、不要编号、不要空行分组、不要解释、不要代码块围栏。',
 ].join('')
 
@@ -485,7 +490,6 @@ async function handleRequest(ctx, req, res) {
             rules: entry.rules,
             sources: entry.sources,
             inherit: entry.inherit,
-            implicit: item.implicit === true,
             ancestors: ancestorsOf(item.path).map((ancestor) => ({
               path: ancestor.path,
               title: ancestor.title,
@@ -501,15 +505,19 @@ async function handleRequest(ctx, req, res) {
       return
     }
     const store = readStore()
-    const entry = entryOf(store, storeKey(store, sessionId))
+    const storedKey = keyFor(store, sessionId)
+    const entry = entryOf(store, storedKey)
     const workspace = workspaceForSession(sessionId)
+    const layers = workspace === undefined ? [] : layersOf(workspace.path, workspace.title)
+    // Nothing is ticked until this session ticks it itself.
+    const inherit = entry.inherit
     const body: any = {
       ok: true,
       sessionId,
       rules: entry.rules,
       sources: entry.sources,
       enabled: entry.enabled,
-      inherit: entry.inherit,
+      inherit,
       // null when the session's workspace cannot be located: the dialog then
       // hides the workspace block instead of writing to a guessed key.
       shared:
@@ -518,10 +526,14 @@ async function handleRequest(ctx, req, res) {
           : {
               path: workspace.path,
               title: workspace.title,
-              rules: workspaceRulesOf(store, workspace.path),
+              layers: layers.map((layer) => ({
+                path: layer.path,
+                title: layer.title,
+                rules: workspaceEntryOf(store, layer.path).rules,
+                selected: selectedLayers(layers, inherit).includes(layer.path),
+              })),
             },
     }
-    if (url.searchParams.get('candidates') === '1') body.files = projectFiles(sessionId)
     sendJson(res, 200, body)
     return
   }
@@ -603,12 +615,16 @@ async function handleRequest(ctx, req, res) {
     return
   }
   const enabled = payload?.enabled === true
-  const inherit = payload?.inherit === true
+  const inherit = Array.isArray(payload?.inherit)
+    ? payload.inherit.filter((item) => typeof item === 'string').slice(0, 100)
+    : payload?.inherit === true
+      ? ['*']
+      : []
   const rawSources = Array.isArray(payload?.sources) ? payload.sources : []
   const sources = rawSources.filter((item) => typeof item === 'string' && item.length <= 500).slice(0, 100)
 
   const store = readStore()
-  store[storeKey(store, sessionId)] = { rules, sources, enabled, inherit, updatedAt: new Date().toISOString() }
+  store[keyFor(store, sessionId)] = { rules, sources, enabled, inherit, updatedAt: new Date().toISOString() }
   try {
     writeStore(store)
   } catch (error) {
@@ -665,15 +681,17 @@ export function apply(ctx) {
 // functions that take their dependencies explicitly.
 export const __test = {
   handleRequest,
+  readStore,
   rulesFor,
   entryOf,
   idCandidates,
-  projectFiles,
   workspaceOf,
   workspaceEntry,
   workspaceRegistry,
   knownWorkspaces,
-  workspaceRulesOf,
+  layersOf,
+  sessionLayerText,
+  selectedLayers,
   ancestorsOf,
   workspaceForSession,
   optimizeRules,

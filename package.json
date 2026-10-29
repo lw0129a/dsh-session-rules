@@ -1,7 +1,7 @@
 {
   "name": "dsh-session-rules",
-  "version": "0.6.3",
-  "description": "Per-session rules and notes for DeepSeek Harness: edit this conversation's constraints and coding conventions in a popup, import existing project guidelines read-only, and save rules extracted from the conversation. The saved text is injected into that session's system prompt on the next model call.",
+  "version": "0.7.0",
+  "description": "Workspace- and session-scoped rules for DeepSeek Harness. Impacts: injects a system-prompt section when enabled, reads/writes the plugin store under $DSH_HOME/plugin-data, reads DSH workspace and session directories, serves one local HTTP route, calls the model already configured in the app, and adds one item to the sidebar workspace menu. edit this conversation's constraints and coding conventions in a popup, import existing project guidelines read-only, and save rules extracted from the conversation. The saved text is injected into that session's system prompt on the next model call.",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -46,7 +46,7 @@
   },
   "meta": {
     "title": "Session Rules",
-    "description": "会话守则：为本会话设置注意事项与规范，支持导入项目现有规范（只读）和从对话中提炼保存。"
+    "description": "会话守则：按工作区层级维护守则，在会话里逐层勾选带入，支持导入项目现有规范（只读）。注意：勾了「对本会话生效」后，这些文字会跟着系统提示词在每一轮请求里发送，所以每一轮都会多消耗 token，勾的层级越多消耗越大；不勾则只留在本地、不发送。层级按工作区路径推算，和侧边栏「视图选项 → 分组方式 → 按工作区树」对齐（该选项由你自己设置，插件不替你改）。影响范围：注入系统提示词、读写插件数据文件、只读 DSH 工作区与会话目录、注册本地 HTTP 路由、用 App 已配置的模型整理草稿、在侧边栏菜单里加一项。"
   },
   "repository": {
     "type": "git",

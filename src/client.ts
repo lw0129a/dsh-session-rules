@@ -24,22 +24,58 @@
     const MENU_ID = 'session-rules.menu'
     const DIALOG_ID = 'session-rules.dialog'
     const WORKSPACE_DIALOG_ID = 'session-rules.workspace-dialog'
+
+    // Wider panels that still fit the window: 80% of the viewport at most, so
+    // the dialog never spills out on a small window. DSH's Modal takes
+    // `className` for the panel and `contentClassName` for the scrolling body.
+    const DIALOG_CSS = [
+      // Width follows the content, capped at 80% of the window; height is capped
+      // the same way and the body scrolls when the content does not fit.
+      '.dsw-session-rules-panel,.dsw-session-rules-panel-narrow{',
+      'width:fit-content!important;min-width:min(520px,80vw);max-width:80vw;',
+      'max-height:80vh!important;display:flex;flex-direction:column}',
+      '.dsw-session-rules-panel-narrow{min-width:min(460px,80vw)}',
+      // Header and footer stay put; only the body between them scrolls.
+      '.dsw-session-rules-content{min-height:0;flex:1 1 auto;display:flex;flex-direction:column;overflow:hidden}',
+      '.dsw-session-rules-content>*:last-child{min-height:0;overflow-y:auto}',
+      // Footer buttons: roomier tap target, and the save button reads as the
+      // primary action instead of looking like another cancel.
+      '.dsw-session-rules-action{min-height:36px;padding:0 20px;border-radius:9px;',
+      'font-size:13.5px;font-weight:500;display:inline-flex;align-items:center;',
+      'justify-content:center;transition:background-color .15s,border-color .15s}',
+      '.dsw-session-rules-action-primary{background:var(--dsw-alias-button-primary-fill,#1f6feb);',
+      'border:1px solid transparent;color:var(--dsw-alias-label-primary-foreground,#fff)}',
+      '.dsw-session-rules-action-primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover,#1a5fd0)}',
+      '.dsw-session-rules-action-primary:disabled{opacity:.5;cursor:not-allowed}',
+    ].join('')
+    const DIALOG_CSS_ID = 'session-rules.dialog-css'
+
+    function ensureDialogCss() {
+      if (typeof document === 'undefined') return
+      if (document.querySelector(`style[data-plugin-css="${DIALOG_CSS_ID}"]`) !== null) return
+      const tag = document.createElement('style')
+      tag.dataset.plugin = 'dsh-session-rules'
+      tag.dataset.pluginCss = DIALOG_CSS_ID
+      tag.textContent = DIALOG_CSS
+      document.head.appendChild(tag)
+    }
     const ENDPOINT = '/__chameleon/session/rules'
     // The workspace "..." menu has no extension slot, so a DOM enhancer adds one
     // entry to it; the click lands here and the footer dialog opens on that
     // workspace.
-    const workspacePicker = (function () {
+    function pickStore() {
       const listeners: any = new Set()
       return {
         subscribe(listener) {
           listeners.add(listener)
           return () => listeners.delete(listener)
         },
-        pick(workspacePath) {
-          for (const listener of listeners) listener(workspacePath)
+        pick(value) {
+          for (const listener of listeners) listener(value)
         },
       }
-    })()
+    }
+    const workspacePicker = pickStore()
     const NS = 'session-rules'
 
     const ZH = {
@@ -47,7 +83,6 @@
       'dialog.title': '会话守则',
       'dialog.hint': '这里写的内容会加入本会话的系统提示词，每轮对话生效；不影响其他会话，也不改动项目文件。',
       'dialog.placeholder': '例如：\n- 修改前先跑测试\n- 只改和相关功能有关的文件\n- 中文回复，少用列表',
-      'dialog.import': '导入项目规范',
       'dialog.optimize': '优化描述',
       'dialog.confirmTitle': '优化前请确认',
       'dialog.confirmBody': '会用当前会话所用的模型重写整段内容，原描述不会立刻改动，稍后可在新旧对照里选择是否替换。',
@@ -66,22 +101,34 @@
       'dialog.discardOptimize': '放弃本次优化',
       'dialog.candidateEmpty': '模型返回了空内容，请重试。',
       'dialog.nothingToOptimize': '先写点内容再优化。',
-      'dialog.pickHint': '选择要导入的项目规范文件（只读，不会修改原文件）：',
-      'dialog.nothingFound': '没有找到项目规范文件（AGENTS.md / CLAUDE.md / .cursorrules 等）。',
-      'dialog.importPicked': '导入选中',
       'dialog.sources': '已导入：',
       'dialog.cancel': '取消',
       'dialog.save': '保存',
       'dialog.saved': '已保存，下一轮对话生效。',
       'dialog.loadFailed': '读取失败',
+      'error.bad json body': '请求内容不是合法 JSON。',
+      'error.body too large': '请求内容过长。',
+      'error.could not save rules': '写入守则文件失败。',
+      'error.empty completion': '模型返回了空内容。',
+      'error.llm service unavailable': '当前没有可用的模型服务。',
+      'error.method not allowed': '不支持的请求方法。',
+      'error.model unavailable': '模型暂时不可用。',
+      'error.no model selection': '这个会话没有选中的模型。',
+      'error.nothing to optimize': '没有可以整理的内容。',
+      'error.rules too long': '守则太长，超出了上限。',
+      'error.rules too long to optimize': '守则太长，无法整理。',
+      'error.sessionId is required': '没有取到会话 id，请重开会话。',
+      'error.unauthorized': '请求被拒绝（未授权）。',
+      'error.unknown workspace': '这个工作区已经不在工作区列表里了。',
+      'error.invalid response': '返回内容无法解析。',
       'dialog.saveFailed': '保存失败',
       'dialog.empty': '（尚未设置，留空即不注入）',
       'dialog.sessionSection': '本会话守则',
       'dialog.sharedSection': '工作区守则',
-      'dialog.sharedHint': '这里只读预览本会话所在工作区、已启用的上层守则。工作区守则要在「工作区守则」面板里编辑，默认不带过来。',
+      'dialog.sharedHint': '按层列出本会话所在工作区的守则，逐层勾选要带进本会话的内容（可多选）。内容要到「工作区守则」面板里编辑，这里只读。',
       'dialog.sharedUnavailable': '未能识别本会话的工作区，本次只能编辑本会话守则。',
-      'dialog.inheritShared': '对本会话启用工作区守则（默认关闭）',
-      'dialog.sharedEditHint': '要改这些内容，用侧边栏底部的「工作区守则」。',
+      'dialog.inheritLayer': '沿用「%s」的守则',
+      'dialog.sharedEditHint': '要改这些内容，用侧边栏工作区行的「⋯」菜单 →「会话守则」。',
       'menu.workspace': '会话守则',
       'ws.title': '工作区守则',
       'ws.hint': '每个工作区可以写一份守则；子工作区只能勾选是否沿用上层，不能改上层内容。会话里默认不带入，需要各自勾选启用。',
@@ -89,7 +136,7 @@
       'ws.loadFailed': '读取失败',
       'ws.saveFailed': '保存失败',
       'ws.saved': '已保存。',
-      'ws.pick': '选择工作区',
+      'ws.unknown': '找不到这个工作区，可能已被删除。',
       'ws.preview': '查看内容（只读）',
       'ws.own': '本工作区守则',
       'ws.ownPlaceholder': '例如：\n- 本工作区统一用 pnpm\n- 提交前跑 npm test',
@@ -107,7 +154,6 @@
       'dialog.title': 'Session rules',
       'dialog.hint': 'Text here is added to this conversation’s system prompt on every turn. Other sessions and project files are untouched.',
       'dialog.placeholder': 'e.g.\n- Run the tests before changing code\n- Touch only files related to the task\n- Reply in Chinese',
-      'dialog.import': 'Import project guidelines',
       'dialog.optimize': 'Polish',
       'dialog.confirmTitle': 'Before polishing',
       'dialog.confirmBody': 'The session model rewrites the whole text. Your original stays untouched until you accept the result in the comparison view.',
@@ -126,22 +172,34 @@
       'dialog.discardOptimize': 'Discard polish',
       'dialog.candidateEmpty': 'The model returned nothing — try again.',
       'dialog.nothingToOptimize': 'Write something first.',
-      'dialog.pickHint': 'Pick project guideline files to copy in (read-only, the originals are not modified):',
-      'dialog.nothingFound': 'No project guideline file found (AGENTS.md / CLAUDE.md / .cursorrules …).',
-      'dialog.importPicked': 'Import selected',
       'dialog.sources': 'Imported from: ',
       'dialog.cancel': 'Cancel',
       'dialog.save': 'Save',
       'dialog.saved': 'Saved — active from the next turn.',
       'dialog.loadFailed': 'Could not load',
+      'error.bad json body': 'The request body was not valid JSON.',
+      'error.body too large': 'The request body was too large.',
+      'error.could not save rules': 'Could not write the rules file.',
+      'error.empty completion': 'The model returned nothing.',
+      'error.llm service unavailable': 'No model service is available.',
+      'error.method not allowed': 'Unsupported request method.',
+      'error.model unavailable': 'The model is unavailable right now.',
+      'error.no model selection': 'This session has no model selected.',
+      'error.nothing to optimize': 'There is nothing to tidy up yet.',
+      'error.rules too long': 'The rules are too long.',
+      'error.rules too long to optimize': 'The rules are too long to tidy up.',
+      'error.sessionId is required': 'No session id — reopen the session.',
+      'error.unauthorized': 'The request was rejected (unauthorized).',
+      'error.unknown workspace': 'That workspace is no longer registered.',
+      'error.invalid response': 'The response could not be read.',
       'dialog.saveFailed': 'Could not save',
       'dialog.empty': '(empty — nothing is injected)',
       'dialog.sessionSection': 'This session',
       'dialog.sharedSection': 'Workspace rules',
-      'dialog.sharedHint': 'Read-only preview of the workspace rules this session would inherit. Edit them in the Workspace rules panel; nothing is applied by default.',
+      'dialog.sharedHint': 'One row per workspace level; tick any number of them to bring their rules into this session. Read-only — edit the content in the Workspace rules panel.',
       'dialog.sharedUnavailable': 'This session’s workspace could not be located, so only the session rules can be edited here.',
-      'dialog.inheritShared': 'Apply the workspace rules to this session (off by default)',
-      'dialog.sharedEditHint': 'Edit them from “Workspace rules” at the bottom of the sidebar.',
+      'dialog.inheritLayer': 'Inherit “%s”',
+      'dialog.sharedEditHint': 'To change them, use the sidebar workspace row’s “⋯” menu → “Session rules”.',
       'menu.workspace': 'Session rules',
       'ws.title': 'Workspace rules',
       'ws.hint': 'Each workspace keeps its own rules; a child workspace can only opt into its ancestors, never edit them. Sessions do not inherit anything until they tick the box.',
@@ -149,7 +207,7 @@
       'ws.loadFailed': 'Could not load',
       'ws.saveFailed': 'Could not save',
       'ws.saved': 'Saved.',
-      'ws.pick': 'Workspace',
+      'ws.unknown': 'This workspace is gone — it may have been deleted.',
       'ws.preview': 'Show content (read only)',
       'ws.own': 'Rules for this workspace',
       'ws.ownPlaceholder': 'e.g.\n- This workspace uses pnpm\n- Run the tests before committing',
@@ -161,6 +219,14 @@
       'ws.save': 'Save',
       'dialog.enabled': 'Apply to this session',
       'dialog.disabledHint': 'Off — the rules are kept but not added to this session’s system prompt.',
+    }
+
+    // Host errors arrive as English strings; the dictionaries carry one entry
+    // per message so the dialog speaks the same language as the app.
+    function describeError(t, cause) {
+      const raw = String(cause?.message ?? cause ?? '').trim()
+      const text = t(`error.${raw}`)
+      return text === `error.${raw}` ? raw : text
     }
 
     function seatOf(props) {
@@ -344,13 +410,11 @@
       const [rules, setRules] = React.useState('')
       const [sources, setSources] = React.useState([])
       const [enabled, setEnabled] = React.useState(false)
-      const [inherit, setInherit] = React.useState(false)
+      const [inherit, setInherit] = React.useState([])
       const [loading, setLoading] = React.useState(true)
       const [busy, setBusy] = React.useState(false)
       const [error, setError] = React.useState(null)
       const [note, setNote] = React.useState(null)
-      const [candidates, setCandidates] = React.useState(null)
-      const [picked, setPicked] = React.useState({})
       const [review, setReview] = React.useState(null)
       const [confirmOpen, setConfirmOpen] = React.useState(false)
 
@@ -370,18 +434,24 @@
             setRules(typeof body.rules === 'string' ? body.rules : '')
             setSources(Array.isArray(body.sources) ? body.sources : [])
             setEnabled(body.enabled === true)
-            setInherit(body.inherit === true)
+            setInherit(Array.isArray(body.inherit) ? body.inherit : [])
             const scope = body.shared
             if (scope !== null && typeof scope === 'object') {
               setShared({
                 path: typeof scope.path === 'string' ? scope.path : '',
                 title: typeof scope.title === 'string' ? scope.title : '',
-                rules: typeof scope.rules === 'string' ? scope.rules : '',
+                layers: Array.isArray(scope.layers)
+                  ? scope.layers.map((layer) => ({
+                      path: typeof layer?.path === 'string' ? layer.path : '',
+                      title: typeof layer?.title === 'string' ? layer.title : '',
+                      rules: typeof layer?.rules === 'string' ? layer.rules : '',
+                    }))
+                  : [],
               })
             }
           })
           .catch((cause) => {
-            if (!cancelled) setError(`${t('dialog.loadFailed')}: ${String(cause?.message ?? cause)}`)
+            if (!cancelled) setError(`${t('dialog.loadFailed')}: ${describeError(t, cause)}`)
           })
           .finally(() => {
             if (!cancelled) setLoading(false)
@@ -412,7 +482,7 @@
           if (candidate === '') throw new Error(t('dialog.candidateEmpty'))
           setReview({ original: rules, candidate })
         } catch (cause) {
-          setError(`${t('dialog.optimizeFailed')} ${String(cause?.message ?? cause)}`)
+          setError(`${t('dialog.optimizeFailed')} ${describeError(t, cause)}`)
         } finally {
           setBusy(false)
         }
@@ -439,7 +509,7 @@
           if (!body || body.ok !== true) throw new Error(body?.error ?? `HTTP ${res.status}`)
           setNote(t('dialog.saved'))
         } catch (cause) {
-          setError(`${t('dialog.saveFailed')}: ${String(cause?.message ?? cause)}`)
+          setError(`${t('dialog.saveFailed')}: ${describeError(t, cause)}`)
         } finally {
           setBusy(false)
         }
@@ -451,49 +521,8 @@
           setNote(t('dialog.copied'))
           setError(null)
         } catch (cause) {
-          setError(`${t('dialog.saveFailed')}: ${String(cause?.message ?? cause)}`)
+          setError(`${t('dialog.saveFailed')}: ${describeError(t, cause)}`)
         }
-      }
-
-      async function loadCandidates() {
-        setBusy(true)
-        setError(null)
-        try {
-          const res = await fetch(`${ENDPOINT}?sessionId=${encodeURIComponent(sessionId)}&candidates=1`, {
-            credentials: 'same-origin',
-          })
-          const body = await res.json()
-          if (!body || body.ok !== true) throw new Error(body?.error ?? `HTTP ${res.status}`)
-          const files = Array.isArray(body.files) ? body.files : []
-          setCandidates(files)
-          const next = {}
-          for (const file of files) next[file.path] = true
-          setPicked(next)
-        } catch (cause) {
-          setError(`${t('dialog.loadFailed')}: ${String(cause?.message ?? cause)}`)
-        } finally {
-          setBusy(false)
-        }
-      }
-
-      function importPicked() {
-        if (!Array.isArray(candidates)) return
-        const chunks = []
-        const imported = []
-        for (const file of candidates) {
-          if (picked[file.path] !== true) continue
-          chunks.push(`## 来源：${file.path}\n\n${file.content}`)
-          imported.push(file.path)
-        }
-        if (chunks.length > 0) {
-          setRules((previous) => {
-            const base = previous.trim() === '' ? '' : `${previous.trimEnd()}\n\n`
-            return `${base}${chunks.join('\n\n')}\n`
-          })
-          setSources((previous) => [...new Set([...previous, ...imported])])
-          setNote(t('dialog.saved') === undefined ? null : null)
-        }
-        setCandidates(null)
       }
 
       const reviewChildren = []
@@ -532,6 +561,65 @@
         reviewChildren.push(panel('candidate', t('dialog.candidate'), review.candidate, true))
       }
 
+      const layerCard = (layer) =>
+        h(
+          'div',
+          {
+            key: layer.path,
+            style: {
+              border: '1px solid var(--dsw-alias-border-secondary, #d0d7de)',
+              borderRadius: 8,
+              padding: '10px 12px',
+              margin: '0 0 8px',
+            },
+          },
+          h(
+            'label',
+            {
+              style: {
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 13,
+                cursor: 'pointer',
+                userSelect: 'none',
+              },
+            },
+            h('input', {
+              type: 'checkbox',
+              checked: inherit.includes(layer.path),
+              onChange: (event) =>
+                setInherit((previous) =>
+                  event.target.checked
+                    ? [...new Set([...previous, layer.path])]
+                    : previous.filter((item) => item !== layer.path),
+                ),
+            }),
+            h('span', null, t('dialog.inheritLayer').replace('%s', layer.title)),
+          ),
+          layer.rules === ''
+            ? h('p', { style: { ...bodyStyle, margin: '6px 0 0' } }, t('dialog.empty'))
+            : h(
+                'details',
+                { style: { margin: '8px 0 0' } },
+                h('summary', { style: { ...bodyStyle, cursor: 'pointer', margin: 0 } }, t('ws.preview')),
+                h(
+                  'pre',
+                  {
+                    style: {
+                      ...textareaStyle,
+                      margin: '8px 0 0',
+                      minHeight: 0,
+                      maxHeight: 180,
+                      overflow: 'auto',
+                      whiteSpace: 'pre-wrap',
+                    },
+                  },
+                  layer.rules,
+                ),
+              ),
+        )
+
       const sharedBlock =
         shared === null
           ? h('p', { key: 'noShared', style: { ...bodyStyle, margin: '14px 0 0' } }, t('dialog.sharedUnavailable'))
@@ -543,23 +631,7 @@
                 shared.title === '' ? t('dialog.sharedSection') : `${t('dialog.sharedSection')} — ${shared.title}`,
               ),
               h('p', { key: 'sharedHint', style: { ...bodyStyle, margin: '0 0 10px' } }, t('dialog.sharedHint')),
-              checkbox('inherit', inherit, setInherit, t('dialog.inheritShared')),
-              h(
-                'pre',
-                {
-                  key: 'sharedPreview',
-                  style: {
-                    ...textareaStyle,
-                    minHeight: 0,
-                    maxHeight: 180,
-                    overflow: 'auto',
-                    margin: 0,
-                    whiteSpace: 'pre-wrap',
-                    color: shared.rules === '' ? 'var(--dsw-alias-text-secondary, #57606a)' : undefined,
-                  },
-                },
-                shared.rules === '' ? t('dialog.empty') : shared.rules,
-              ),
+              shared.layers.map(layerCard),
               h('p', { key: 'sharedEditHint', style: { ...bodyStyle, margin: '8px 0 0' } }, t('dialog.sharedEditHint')),
             )
 
@@ -586,32 +658,6 @@
       if (error !== null) children.push(h('p', { key: 'error', style: { ...errorStyle, margin: '8px 0 0' } }, error))
       else if (note !== null) children.push(h('p', { key: 'note', style: { ...goodStyle, margin: '8px 0 0' } }, note))
 
-      if (Array.isArray(candidates)) {
-        children.push(h('p', { key: 'pickHint', style: { ...bodyStyle, margin: '12px 0 4px' } }, t('dialog.pickHint')))
-        if (candidates.length === 0) {
-          children.push(h('p', { key: 'none', style: bodyStyle }, t('dialog.nothingFound')))
-        } else {
-          children.push(
-            h(
-              'div',
-              { key: 'pickList', style: { display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 160, overflow: 'auto' } },
-              candidates.map((file) =>
-                h(
-                  'label',
-                  { key: file.path, style: { ...bodyStyle, display: 'flex', gap: 6, alignItems: 'center' } },
-                  h('input', {
-                    type: 'checkbox',
-                    checked: picked[file.path] === true,
-                    onChange: (event) => setPicked((previous) => ({ ...previous, [file.path]: event.target.checked })),
-                  }),
-                  file.path,
-                ),
-              ),
-            ),
-          )
-        }
-      }
-
       const footer =
         review !== null
           ? [
@@ -633,13 +679,8 @@
               ),
             ]
           : [
-              h(
-                Button,
-                { key: 'import', variant: 'outline', size: 'sm', onClick: importPicked, disabled: busy || !Array.isArray(candidates) || candidates.length === 0 },
-                t('dialog.importPicked'),
-              ),
-              h(Button, { key: 'cancel', variant: 'outline', size: 'sm', onClick: props.onClose }, t('dialog.cancel')),
-              h(Button, { key: 'save', variant: 'outline', size: 'sm', onClick: save, disabled: busy || loading }, t('dialog.save')),
+              h(Button, { key: 'cancel', variant: 'outline', size: 'sm', className: 'dsw-session-rules-action', onClick: props.onClose }, t('dialog.cancel')),
+              h(Button, { key: 'save', variant: 'outline', size: 'sm', className: 'dsw-session-rules-action dsw-session-rules-action-primary', onClick: save, disabled: busy || loading }, t('dialog.save')),
             ]
 
       if (confirmOpen) {
@@ -652,13 +693,14 @@
             closeLabel: t('dialog.cancel'),
             description: t('dialog.confirmBody'),
             footer: [
-              h(Button, { key: 'cancel', variant: 'outline', size: 'sm', onClick: () => setConfirmOpen(false) }, t('dialog.cancel')),
+              h(Button, { key: 'cancel', variant: 'outline', size: 'sm', className: 'dsw-session-rules-action', onClick: () => setConfirmOpen(false) }, t('dialog.cancel')),
               h(
                 Button,
                 {
                   key: 'start',
                   variant: 'outline',
                   size: 'sm',
+                  className: 'dsw-session-rules-action dsw-session-rules-action-primary',
                   onClick: () => {
                     setConfirmOpen(false)
                     void optimize()
@@ -677,25 +719,36 @@
         {
           open: true,
           onClose: props.onClose,
+          className: 'dsw-session-rules-panel',
+          contentClassName: 'dsw-session-rules-content',
           title: t('dialog.title'),
           closeLabel: t('dialog.cancel'),
           description: t('dialog.hint'),
           footer,
         },
-        Array.isArray(candidates) && candidates.length === 0
-          ? children
-          : [
-              ...children,
-              // "import" trigger sits above the list only before the list is loaded.
-              Array.isArray(candidates)
-                ? null
-                : h(
-                    'div',
-                    { key: 'importRow', style: { marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' } },
-                    h(Button, { variant: 'outline', size: 'sm', onClick: loadCandidates, disabled: busy || loading }, t('dialog.import')),
-                    h(Button, { variant: 'outline', size: 'sm', onClick: () => { if (rules.trim() === '') { setNote(t('dialog.nothingToOptimize')); return } setConfirmOpen(true) }, disabled: busy || loading }, busy ? t('dialog.optimizing') : t('dialog.optimize')),
-                  ),
-            ].filter((item) => item !== null),
+        [
+          ...children,
+          h(
+            'div',
+            { key: 'optimizeRow', style: { marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' } },
+            h(
+              Button,
+              {
+                variant: 'outline',
+                size: 'sm',
+                onClick: () => {
+                  if (rules.trim() === '') {
+                    setNote(t('dialog.nothingToOptimize'))
+                    return
+                  }
+                  setConfirmOpen(true)
+                },
+                disabled: busy || loading,
+              },
+              busy ? t('dialog.optimizing') : t('dialog.optimize'),
+            ),
+          ),
+        ],
       )
     }
 
@@ -707,7 +760,9 @@
       const t = (key) => resolveText(seat, key)
       const desired = typeof props.initialPath === 'string' ? props.initialPath : ''
       const [items, setItems] = React.useState(null)
-      const [selected, setSelected] = React.useState('')
+      // The workspace is decided by the row this panel was opened from; there
+      // is nothing to pick here.
+      const selected = desired
       const [rules, setRules] = React.useState('')
       const [inherit, setInherit] = React.useState([])
       const [loading, setLoading] = React.useState(true)
@@ -715,10 +770,12 @@
       const [error, setError] = React.useState(null)
       const [note, setNote] = React.useState(null)
 
-      function pickFrom(list, workspacePath) {
+      function loadInto(list, workspacePath) {
         const item = list.find((candidate) => candidate.path === workspacePath)
-        if (item === undefined) return
-        setSelected(item.path)
+        if (item === undefined) {
+          setError(t('ws.unknown'))
+          return
+        }
         setRules(typeof item.rules === 'string' ? item.rules : '')
         setInherit(Array.isArray(item.inherit) ? item.inherit : [])
         setError(null)
@@ -734,11 +791,10 @@
             if (!body || body.ok !== true) throw new Error(body?.error ?? 'invalid response')
             const list = Array.isArray(body.workspaces) ? body.workspaces : []
             setItems(list)
-            const wanted = list.some((item) => item.path === desired) ? desired : list[0]?.path
-            if (wanted !== undefined) pickFrom(list, wanted)
+            loadInto(list, desired)
           })
           .catch((cause) => {
-            if (!cancelled) setError(`${t('ws.loadFailed')}: ${String(cause?.message ?? cause)}`)
+            if (!cancelled) setError(`${t('ws.loadFailed')}: ${describeError(t, cause)}`)
           })
           .finally(() => {
             if (!cancelled) setLoading(false)
@@ -767,20 +823,12 @@
           )
           setNote(t('ws.saved'))
         } catch (cause) {
-          setError(`${t('ws.saveFailed')}: ${String(cause?.message ?? cause)}`)
+          setError(`${t('ws.saveFailed')}: ${describeError(t, cause)}`)
         } finally {
           setBusy(false)
         }
       }
 
-      // Shallowest first, so a child always lists under its parent.
-      const list =
-        items === null
-          ? []
-          : [...items].sort(
-              (left, right) =>
-                (left.ancestors?.length ?? 0) - (right.ancestors?.length ?? 0) || left.path.localeCompare(right.path),
-            )
       const current = items === null ? undefined : items.find((item) => item.path === selected)
       const ancestors = current !== undefined && Array.isArray(current.ancestors) ? current.ancestors : []
       const detailStyle = {
@@ -843,33 +891,8 @@
           : h(
               'div',
               { key: 'main', style: { display: 'flex', flexDirection: 'column' } },
-              sectionTitle('pickTitle', t('ws.pick')),
-              h(
-                'select',
-                {
-                  key: 'pick',
-                  value: selected,
-                  onChange: (event) => pickFrom(items, event.target.value),
-                  style: {
-                    width: '100%',
-                    padding: '6px 8px',
-                    font: 'inherit',
-                    fontSize: 13,
-                    color: 'var(--dsw-alias-text-primary, #1f2328)',
-                    background: 'var(--dsw-alias-bg-secondary, #f6f8fa)',
-                    border: '1px solid var(--dsw-alias-border-secondary, #d0d7de)',
-                    borderRadius: 6,
-                  },
-                },
-                list.map((item) =>
-                  h(
-                    'option',
-                    { key: item.path, value: item.path },
-                    `${'\u00a0\u00a0\u00a0'.repeat(Array.isArray(item.ancestors) ? item.ancestors.length : 0)}${item.title}`,
-                  ),
-                ),
-              ),
-              h('p', { key: 'pickPath', style: { ...bodyStyle, margin: '6px 0 16px', wordBreak: 'break-all' } }, selected),
+              h('p', { key: 'pickTitle', style: { ...bodyStyle, fontWeight: 600, margin: '0 0 2px' } }, current === undefined ? '' : current.title),
+              h('p', { key: 'pickPath', style: { ...bodyStyle, margin: '0 0 16px', wordBreak: 'break-all' } }, selected),
               sectionTitle('ownTitle', t('ws.own')),
               h('textarea', {
                 key: 'ownArea',
@@ -898,11 +921,13 @@
         {
           open: true,
           onClose: props.onClose,
+          className: 'dsw-session-rules-panel-narrow',
+          contentClassName: 'dsw-session-rules-content',
           title: t('ws.title'),
           closeLabel: t('ws.close'),
           footer: [
-            h(Button, { key: 'close', variant: 'outline', size: 'sm', onClick: props.onClose }, t('ws.close')),
-            h(Button, { key: 'save', variant: 'outline', size: 'sm', onClick: save, disabled: busy || loading || selected === '' }, busy ? t('ws.saved') : t('ws.save')),
+            h(Button, { key: 'close', variant: 'outline', size: 'sm', className: 'dsw-session-rules-action', onClick: props.onClose }, t('ws.close')),
+            h(Button, { key: 'save', variant: 'outline', size: 'sm', className: 'dsw-session-rules-action dsw-session-rules-action-primary', onClick: save, disabled: busy || loading || selected === '' }, busy ? t('ws.saved') : t('ws.save')),
           ],
         },
         children,
@@ -998,9 +1023,13 @@
       return wrapper
     }
 
-    function menuLabel(doc: any): string {
+    function isZh(doc: any): boolean {
       const lang = doc?.documentElement?.getAttribute('lang') ?? ''
-      return lang.toLowerCase().startsWith('zh') ? '会话守则' : 'Session rules'
+      return lang.toLowerCase().startsWith('zh')
+    }
+
+    function menuLabel(doc: any): string {
+      return isZh(doc) ? '工作区守则' : 'Workspace rules'
     }
 
     function closeMenu(doc: any): void {
@@ -1008,7 +1037,10 @@
       if (PointerEventCtor !== undefined) doc.dispatchEvent(new PointerEventCtor('pointerdown', { bubbles: true }))
     }
 
-    function enhanceWorkspaceMenu(doc: any, onPick: (workspacePath: string) => void): () => void {
+    function enhanceWorkspaceMenu(
+      doc: any,
+      handlers: { workspace: (workspacePath: string) => void },
+    ): () => void {
       if (typeof doc?.createElement !== 'function') return () => {}
       const ObserverCtor = doc.defaultView?.MutationObserver
       if (ObserverCtor === undefined) return () => {}
@@ -1027,16 +1059,30 @@
         const workspaceId = rowKey.startsWith('workspace:') ? rowKey.slice('workspace:'.length) : ''
         if (workspaceId === '') return
         const viewport = menu.querySelector('[role="presentation"]') ?? menu
-        viewport.prepend(
+        // Both entries go directly under 重命名 (always the first item), so the
+        // menu reads: rename, workspace rules, session rules, delete.
+        const rename = menu.querySelector('[role="menuitem"]')
+        const insertAfter = (node: any) => {
+          if (rename === null) viewport.prepend(node)
+          else if (rename.parentElement === null) viewport.prepend(node)
+          else rename.parentElement.after(node)
+        }
+        const lookup = () =>
+          fetch(`${ENDPOINT}?workspaces=1`, { credentials: 'same-origin' })
+            .then((res) => res.json())
+            .then((body) => (Array.isArray(body?.workspaces) ? body.workspaces : []))
+            .catch(() => [])
+        // One entry per row: a workspace row owns its workspace rules only.
+        insertAfter(
           menuEntry(doc, menu, menuLabel(doc), () => {
-            fetch(`${ENDPOINT}?workspaces=1`, { credentials: 'same-origin' })
-              .then((res) => res.json())
-              .then((body) => {
-                const list = Array.isArray(body?.workspaces) ? body.workspaces : []
+            void lookup()
+              .then((list: any[]) => {
                 const match = list.find((item) => item.id === workspaceId)
-                if (match !== undefined) onPick(match.path)
+                // A brand-new workspace can be missing from the registry the
+                // plugin reads; still open the panel so it can be configured
+                // (the picker inside lists every known level).
+                handlers.workspace(match === undefined ? '' : match.path)
               })
-              .catch(() => {})
               .finally(() => closeMenu(doc))
           }),
         )
@@ -1091,7 +1137,10 @@
           ctx.slots.register({
             name: MENU_SLOT,
             id: MENU_ID,
-            order: 500,
+            // Built-in rows sit at 100/200/300/400/450 (pin, rename, fork,
+            // archive, session-id) and sort ascending, so 201 puts this entry
+            // immediately under 重命名.
+            order: 201,
             locale: NS,
             inject: (standard, hookContext) => ({
               hooks: {
@@ -1107,7 +1156,10 @@
           ctx.slots.register({ name: OVERLAY_SLOT, id: DIALOG_ID, order: 100, locale: NS }, DialogHost),
         )
         if (typeof document !== 'undefined') {
-          enhanceWorkspaceMenu(document, (workspacePath) => workspacePicker.pick(workspacePath))
+          ensureDialogCss()
+          enhanceWorkspaceMenu(document, {
+            workspace: (workspacePath) => workspacePicker.pick(workspacePath),
+          })
         }
       },
     }

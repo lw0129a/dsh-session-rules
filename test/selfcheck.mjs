@@ -1,6 +1,6 @@
 // Self-check for the host half: no framework, run with `npm test`.
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Readable } from 'node:stream'
@@ -9,7 +9,7 @@ const home = mkdtempSync(path.join(tmpdir(), 'dsh-session-rules-'))
 process.env.DSH_HOME = home
 
 const { __test } = await import('../dist/index.js')
-const { rulesFor, entryOf, idCandidates, projectFiles, workspaceOf, ancestorsOf, knownWorkspaces, handleRequest } = __test
+const { rulesFor, entryOf, idCandidates, workspaceOf, ancestorsOf, knownWorkspaces, handleRequest, readStore } = __test
 
 // Session ids reach us as `session-<uuid>` in the client and at prompt
 // assembly; the store must find either spelling.
@@ -17,8 +17,8 @@ assert.deepEqual(idCandidates('session-abc'), ['session-abc', 'abc'])
 assert.deepEqual(idCandidates('abc'), ['abc', 'session-abc'])
 
 // Missing / malformed store entries degrade to empty, disabled rules.
-assert.deepEqual(entryOf({}, 'abc'), { rules: '', sources: [], enabled: false, inherit: false })
-assert.deepEqual(entryOf({ abc: { rules: 42, sources: 'x' } }, 'abc'), { rules: '', sources: [], enabled: false, inherit: false })
+assert.deepEqual(entryOf({}, 'abc'), { rules: '', sources: [], enabled: false, inherit: [] })
+assert.deepEqual(entryOf({ abc: { rules: 42, sources: 'x' } }, 'abc'), { rules: '', sources: [], enabled: false, inherit: [] })
 assert.equal(rulesFor('abc'), '')
 
 const storeDir = path.join(home, 'plugin-data', 'dsh-session-rules')
@@ -45,8 +45,8 @@ store({ abc: { rules: '先跑测试', sources: [], enabled: false } })
 assert.equal(rulesFor('abc'), '')
 assert.equal(rulesFor('session-abc'), '')
 
-// Workspace rules: registered workspaces nest by path, and each level opts into
-// the ancestors it wants (`inherit` holds their absolute paths).
+// Workspace rules: registered workspaces nest by path. A session's `inherit`
+// holds the absolute paths of the levels it pulls in ('*' = the whole chain).
 const workspaces = {
   parent: { path: '/tmp/ws-parent', title: 'anjuyi', sessionIds: ['parent-session'] },
   app: { path: '/tmp/ws-parent/app', title: 'uni-platform-app', sessionIds: ['session-abc'] },
@@ -71,7 +71,8 @@ store({
   'ws:/tmp/ws-parent/app': { rules: '本层：先跑测试' },
   abc: { rules: '', sources: [], enabled: false, inherit: true },
 })
-assert.equal(rulesFor('abc'), '本层：先跑测试')
+// The legacy boolean means "the whole chain".
+assert.equal(rulesFor('abc'), '上层：统一用 pnpm\n\n本层：先跑测试')
 
 store({
   'ws:/tmp/ws-parent': { rules: '上层：统一用 pnpm' },
@@ -83,13 +84,29 @@ assert.equal(rulesFor('abc'), '上层：统一用 pnpm\n\n本层：先跑测试'
 // A session that has not opted in gets nothing from its workspace.
 store({
   'ws:/tmp/ws-parent/app': { rules: '本层：先跑测试', inherit: ['/tmp/ws-parent'] },
-  abc: { rules: '', sources: [], enabled: false, inherit: false },
+  abc: { rules: '', sources: [], enabled: false, inherit: [] },
 })
 assert.equal(rulesFor('abc'), '')
 
-// Non-registered paths in `inherit` are ignored.
-store({ 'ws:/tmp/ws-parent/app': { rules: '本层：先跑测试', inherit: ['/etc'] }, abc: { rules: '', sources: [], enabled: false, inherit: true } })
-assert.equal(rulesFor('abc'), '本层：先跑测试')
+// Levels are picked one by one: only the listed ones are injected.
+store({
+  'ws:/tmp/ws-parent': { rules: '上层：统一用 pnpm' },
+  'ws:/tmp/ws-parent/app': { rules: '本层：先跑测试' },
+  abc: { rules: '', sources: [], enabled: false, inherit: ['/tmp/ws-parent'] },
+})
+assert.equal(rulesFor('abc'), '上层：统一用 pnpm')
+
+// Unknown paths in the list are ignored.
+store({ 'ws:/tmp/ws-parent/app': { rules: '本层：先跑测试' }, abc: { rules: '', sources: [], enabled: false, inherit: ['/etc'] } })
+assert.equal(rulesFor('abc'), '')
+
+// Both levels ticked, outermost first.
+store({
+  'ws:/tmp/ws-parent': { rules: '上层：统一用 pnpm' },
+  'ws:/tmp/ws-parent/app': { rules: '本层：先跑测试' },
+  abc: { rules: '', sources: [], enabled: false, inherit: ['/tmp/ws-parent/app', '/tmp/ws-parent'] },
+})
+assert.equal(rulesFor('abc'), '上层：统一用 pnpm\n\n本层：先跑测试')
 
 // Another workspace's rules never reach this session.
 store({
@@ -131,6 +148,15 @@ assert.deepEqual(
   ['anjuyi'],
 )
 
+// A session that never saved anything starts with nothing ticked, even when
+// its workspace levels do have content.
+store({ 'ws:/tmp/ws-parent/app': { rules: '本层：先跑测试' } })
+const freshRes = fakeResponse()
+await handleRequest(ctx, { method: 'GET', url: '/__chameleon/session/rules?sessionId=session-abc', headers: {} }, freshRes)
+const fresh = JSON.parse(freshRes.payload)
+assert.deepEqual(fresh.inherit, [])
+assert.ok(fresh.shared.layers.every((layer) => layer.selected === false))
+
 // Saving a workspace block validates the path against the registry.
 const saveRes = fakeResponse()
 const saveBody = JSON.stringify({
@@ -163,13 +189,54 @@ await handleRequest(
 )
 assert.equal(badRes.status, 404)
 
-// No sessions directory => nothing to import, and no throw.
-assert.deepEqual(projectFiles('session-abc'), [])
+// A workspace that has no session yet can still be configured: it shows up in
+// the panel and its rules save normally. Sessions in it start with nothing
+// ticked until the user opts in.
+writeFileSync(
+  path.join(home, 'storages', 'workspace.json'),
+  JSON.stringify({
+    tables: {
+      workspaces: {
+        fresh: { path: '/tmp/ws-fresh', title: '新建工作区', sessionIds: [] },
+      },
+    },
+  }),
+)
+const freshListRes = fakeResponse()
+await handleRequest(ctx, { method: 'GET', url: '/__chameleon/session/rules?workspaces=1', headers: {} }, freshListRes)
+const freshList = JSON.parse(freshListRes.payload).workspaces
+assert.deepEqual(freshList.map((item) => item.path), ['/tmp/ws-fresh'])
+assert.equal(freshList[0].rules, '')
+assert.deepEqual(freshList[0].inherit, [])
 
-// A parent directory that was never registered as a workspace still becomes a
-// level, so the chain is hierarchical however flat the registry is.
-mkdirSync('/tmp/ws-parent', { recursive: true })
-mkdirSync('/tmp/ws-parent/app', { recursive: true })
+const freshSaveRes = fakeResponse()
+await handleRequest(
+  ctx,
+  Object.assign(Readable.from([Buffer.from(JSON.stringify({ action: 'save-workspace', path: '/tmp/ws-fresh', rules: '新工作区默认不启用', inherit: [] }))]), {
+    method: 'POST',
+    url: '/__chameleon/session/rules',
+    headers: {},
+  }),
+  freshSaveRes,
+)
+assert.equal(freshSaveRes.status, 200)
+assert.equal(readStore()['ws:/tmp/ws-fresh'].rules, '新工作区默认不启用')
+
+// No session exists in it yet, so nothing is injected anywhere.
+assert.equal(rulesFor('session-anything'), '')
+
+// The store is cached by file stamp, so an edit made behind our back has to
+// invalidate it instead of serving stale rules for the rest of the process.
+const storePath = path.join(home, 'plugin-data', 'dsh-session-rules', 'rules.json')
+const external = JSON.parse(readFileSync(storePath, 'utf8'))
+external['ws:/tmp/ws-fresh'].rules = '外部改动'
+writeFileSync(storePath, JSON.stringify(external))
+const bumped = new Date(Date.now() + 5000)
+utimesSync(storePath, bumped, bumped)
+assert.equal(readStore()['ws:/tmp/ws-fresh'].rules, '外部改动')
+
+// Only registered workspaces are levels: the sidebar's own grouping option
+// (分组方式 → 按工作区树) is what makes the tree, not this plugin.
 writeFileSync(
   path.join(home, 'storages', 'workspace.json'),
   JSON.stringify({
@@ -180,43 +247,36 @@ writeFileSync(
     },
   }),
 )
-const known = knownWorkspaces().map((item) => item.path)
-assert.ok(known.includes('/tmp/ws-parent'), 'unregistered parent is a level')
-assert.ok(!known.includes('/tmp'), 'shallow directories are not levels')
-assert.ok(!known.includes('/'), 'the root is never a level')
-assert.deepEqual(ancestorsOf('/tmp/ws-parent/app').map((item) => item.path), ['/tmp/ws-parent'])
-assert.equal(knownWorkspaces().find((item) => item.path === '/tmp/ws-parent').implicit, true)
+assert.deepEqual(knownWorkspaces().map((item) => item.path), ['/tmp/ws-parent/app'])
+assert.deepEqual(ancestorsOf('/tmp/ws-parent/app').map((item) => item.path), [])
 
-// Rules can be saved on an implicit level, and a child opts into it.
-const implicitBody = JSON.stringify({ action: 'save-workspace', path: '/tmp/ws-parent', rules: '上层：统一用 pnpm' })
-const implicitRes = fakeResponse()
-await handleRequest(
-  ctx,
-  Object.assign(Readable.from([Buffer.from(implicitBody)]), {
-    method: 'POST',
-    url: '/__chameleon/session/rules',
-    headers: {},
-  }),
-  implicitRes,
-)
-assert.equal(implicitRes.status, 200)
-store({
-  'ws:/tmp/ws-parent': { rules: '上层：统一用 pnpm' },
-  'ws:/tmp/ws-parent/app': { rules: '本层：先跑测试', inherit: ['/tmp/ws-parent'] },
-  abc: { rules: '', sources: [], enabled: false, inherit: true },
-})
-assert.equal(rulesFor('abc'), '上层：统一用 pnpm\n\n本层：先跑测试')
-
-// Blocks keyed by the old encoded directory name are rewritten to the absolute
-// path, so one naming scheme covers every level.
-mkdirSync('/tmp/wsx', { recursive: true })
+// Deleting a workspace or a session drops its block on the next read.
 writeFileSync(
   path.join(home, 'storages', 'workspace.json'),
-  JSON.stringify({ tables: { workspaces: { wsx: { path: '/tmp/wsx', title: 'wsx', sessionIds: ['session-old'] } } } }),
+  JSON.stringify({ tables: { workspaces: { keep: { path: '/tmp/ws-keep', title: 'keep', sessionIds: ['session-keep'] } } } }),
 )
-store({ 'ws:--tmp-wsx--': { rules: '旧键内容' }, old: { rules: '', sources: [], enabled: false, inherit: true } })
-assert.equal(rulesFor('old'), '旧键内容')
-assert.deepEqual(Object.keys(readFileSync(path.join(storeDir, 'rules.json'), 'utf8') ? JSON.parse(readFileSync(path.join(storeDir, 'rules.json'), 'utf8')) : {}).sort(), ['old', 'ws:/tmp/wsx'])
+mkdirSync(path.join(home, 'sessions', '--tmp-ws-keep--', 'session-keep'), { recursive: true })
+writeFileSync(
+  path.join(storeDir, 'rules.json'),
+  JSON.stringify({
+    'ws:/tmp/ws-keep': { rules: '保留' },
+    'ws:/tmp/ws-gone': { rules: '已删工作区' },
+    'session-keep': { rules: '保留', inherit: [] },
+    'session-gone': { rules: '已删会话', inherit: [] },
+  }),
+)
+const pruned = readStore()
+assert.deepEqual(Object.keys(pruned).sort(), ['session-keep', 'ws:/tmp/ws-keep'])
+assert.deepEqual(
+  Object.keys(JSON.parse(readFileSync(path.join(storeDir, 'rules.json'), 'utf8'))).sort(),
+  ['session-keep', 'ws:/tmp/ws-keep'],
+)
+
+// The store is keyed by plugin name only, inside the plugin's own data
+// directory: upgrading the plugin keeps every rule, and nothing else on the
+// machine reads it.
+assert.equal(path.join(storeDir, 'rules.json'), path.join(home, 'plugin-data', 'dsh-session-rules', 'rules.json'))
+assert.ok(existsSync(path.join(storeDir, 'rules.json')))
 
 rmSync(home, { recursive: true, force: true })
 console.log('selfcheck ok')

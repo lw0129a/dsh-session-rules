@@ -1,6 +1,8 @@
 # dsh-session-rules · 会话守则
 
-给 DeepSeek Harness 设置会话守则的插件。工作区行 `⋯` 菜单的「会话守则」和侧边栏底部「工作区守则」按钮打开同一个编辑框，按工作区（目录）维护守则，目录有层级时子目录只能勾选是否沿用上层、改不了上层；会话行 `⋯` 菜单的「会话守则」里写本会话的守则，并只读预览会沿用哪些工作区守则。保存后从**下一轮**开始生效。所有开关**默认关闭**：写完内容还要勾「对本会话生效」/「对本会话启用工作区守则」才会进入系统提示词（关掉时内容保留、不注入）。不会修改任何项目文件或 Harness 文件。
+> **English** — Workspace- and session-scoped rules for DeepSeek Harness. The UI follows the app's language (Chinese or English). Each workspace keeps one rules block; a child workspace can only tick which ancestor blocks it inherits, never edit them. A session ticks any subset of its workspace chain plus its own block; nothing is applied until ticked. Saved text is injected into that session's system prompt from the next turn on. Rules are stored under `$DSH_HOME/plugin-data/dsh-session-rules/rules.json`; deleting a workspace or a session drops its block. See 「权限与影响范围」 below for the full list of what the plugin reads, writes and registers.
+
+给 DeepSeek Harness 设置会话守则的插件。工作区行 `⋯` 菜单里是「工作区守则」：按工作区（目录）维护守则，目录有层级时子目录只能勾选是否沿用上层、改不了上层。会话行 `⋯` 菜单里是「会话守则」：写本会话的内容，并逐层勾选要带进来的工作区守则。新建的工作区即使还没有会话也能配置。保存后从**下一轮**开始生效。所有开关**默认关闭**：写完内容还要勾「对本会话生效」/勾选要沿用的工作区层，才会进入系统提示词（关掉时内容保留、不注入）。不会修改任何项目文件或 Harness 文件。
 
 典型用途：
 
@@ -8,7 +10,6 @@
 - **编码规范**：缩进、命名、注释语言、提交信息风格。
 - **优化描述**：调当前会话所用的模型（harness 的 LLM 服务，跟随 App 里配置的 provider/model）把草稿整理成可执行的条目，结果不会直接覆盖：弹窗先并排展示「原描述 / 新描述」（都可复制，新描述可改），点「替换原描述」才生效。模型不可用时按钮只是报错，手写不受影响。
 - 输入框里**每行自动是「- 」开头**的条目：前缀在输入或换行时自动补上、删不掉；空行保留用于分组。
-- **导入项目现有规范**：把项目里已有的 `AGENTS.md` / `CLAUDE.md` / `.cursorrules` 等**只读**复制进本会话守则，原文件不动。
 - **稍后版本**（0.2）：从当前对话里提炼关键信息并保存/优化。
 
 工作区行 `⋯` 菜单没有官方扩展槽位，那一项是靠 DOM 增强加进去的（复用内置菜单项的样式与键盘行为）；DSH 改侧栏结构时它可能失效，失效时底部按钮仍在。
@@ -35,18 +36,50 @@ dsh plugin --profile desktop add dsh-session-rules
 
 ## 使用
 
-1. 在会话行 `⋯` 菜单里点「会话守则」。
-2. 直接写，或点「导入项目规范」勾选要复制的文件。
-3. 「保存」→ 下一轮对话生效；清空内容再保存 = 取消注入。
+- **工作区守则**：侧边栏工作区行的 `⋯` 菜单 →「工作区守则」，选一个工作区写。**新建的工作区即使还没有任何会话也能配置**（只要 DSH 已把它登记进工作区列表）。
+- **工作区行的「会话守则」**：打开该工作区里最近一个会话的守则，省得再去点会话行。
+- **会话守则**：会话行 `⋯` 菜单 →「会话守则」，写本会话的内容，并在卡片里逐层勾选要带进来的工作区守则（可多选，只读）。
+- 「保存」→ 下一轮对话生效；清空内容再保存 = 取消注入。
 
-守则保存在 `~/.dsh/plugin-data/dsh-session-rules/rules.json`（`DSH_HOME` 可覆盖），按会话 id 分开存放；工作区守则存在 `ws:<工作区绝对路径>` 键下（例如 `ws:/Users/lw/dev`）；层级由路径本身推导：`~/.dsh/storages/workspace.json` 里已登记的工作区，加上它们所在但没登记的父目录（在家目录以下、非根目录），每一层都能单独保存守则；每个工作区用 `inherit` 记录它勾选沿用的祖先路径。旧版本按会话树目录名存的 `ws:--Users-lw-dev--` 会在读取时自动改写为 `ws:/绝对路径`。注入顺序是「已启用的上层（由外到内）→ 本层 → 本会话」。
+守则保存在 `~/.dsh/plugin-data/dsh-session-rules/rules.json`（`DSH_HOME` 可覆盖）：本会话按会话 id 存，工作区按 `ws:<工作区绝对路径>` 保存（例如 `ws:/Users/you/project`）。层级就是工作区路径本身：一个工作区的每一层祖先（同样是已登记的工作区）都能单独保存守则，子层用 `inherit` 记录它勾选沿用的祖先路径。注入顺序是「已勾选的上层（由外到内）→ 本层 → 本会话」，且**全部默认关闭**，只有用户手动勾选后才进入系统提示词。
+
+## 生效范围与代价
+
+- **每轮都会发送**：勾了「对本会话生效」（或「对本会话启用工作区守则」）之后，守则文字会作为系统提示词的一部分，在该会话**每一轮**请求里跟着发送；关掉就不发、只留本地。改完从下一轮开始生效，历史轮次不会重写。
+- **勾得越多越贵**：工作区守则按层累加，勾 3 层就是 3 层文字一起进提示词，token 消耗随之线性增加；长守则同理。只在真正需要的会话里勾。
+- **层级怎么来的**：按工作区目录路径推算，和侧边栏「视图选项 → 分组方式 → 按工作区树」的父子关系一致。这个分组方式是 DSH 自己的设置，插件不替改；不是树形也能正常用，只是侧边栏看起来和插件里的层级不同。
+
+## 数据存在哪 / 什么时候消失
+
+- **位置**：`$DSH_HOME/plugin-data/dsh-session-rules/rules.json`（默认 `~/.dsh/plugin-data/dsh-session-rules/rules.json`），只属于这个插件，路径里没有版本号。
+- **升级不丢**：插件升级只换代码目录，数据文件按插件名存放，配置原样保留；换机器/重装后把该文件拷回去即可。
+- **禁用或未启用**：插件不加载 → 不注册路由、不注册菜单、不往系统提示词里注入任何东西，弹窗入口也一起消失；数据文件留在原处不动，重新启用后照旧。
+- **删除工作区 / 删除会话**：下次读取时自动清掉对应的那条（已无主的会话或工作区不会再出现）。
+- **卸载插件**：DSH 不会回调插件做清理，数据文件会留在 `plugin-data/dsh-session-rules/` 下；不需要时手动删除这个目录即可（删了不可恢复）。
+
+## 权限与影响范围
+
+装上并启用后，这个插件会碰到下面这些东西，除此之外不碰别的：
+
+| 涉及 | 做什么 | 位置 |
+| --- | --- | --- |
+| 系统提示词 | 往会话的系统提示词里加一段 `session-rules` section（顺序 10190，不插值）。**只有勾了「对本会话生效」/「启用工作区守则」的会话才会注入**，关掉只占存储、不进提示词 | Harness 的 `systemPrompt` 服务 |
+| 插件数据（唯一会写的文件） | 保存守则正文、开关、逐层勾选；读取时顺手删掉已删除工作区/会话留下的条目 | `$DSH_HOME/plugin-data/dsh-session-rules/rules.json` |
+| 工作区列表（只读） | 取工作区的真实路径、标题、所属会话，用来算层级 | `$DSH_HOME/storages/workspace.json` |
+| 会话目录（只读） | 判断某个会话属于哪个工作区，以及会话是否还存在 | `$DSH_HOME/sessions/**` |
+| 本地 HTTP 路由 | 弹窗读写守则用：`GET/POST /__chameleon/session/rules`，只挂在 Harness 自己的 web server 上 | 本机，同源 |
+| 模型调用 | 只有点「优化描述」才调，走 Harness 已配置的 provider/model，不直连外部接口 | Harness 的 `llm` 服务 |
+| 界面 | 注册会话行 `⋯` 菜单项、工作区守则弹窗；往工作区 `⋯` 菜单里用 DOM 增强插一项；往页面 `<head>` 注入一段弹窗样式 | Harness 侧边栏 / overlay |
+
+不会修改 Harness 的 app 文件，不会修改项目文件，不联网（除了 Harness 自己的模型服务）。
 
 ## 安全与边界
 
-- 不修改 Harness 的 app 文件，也不修改项目的规范文件；导入只读取文本。
+- 插件只处理「工作区守则 / 会话守则」这一件事：不内置任何示例守则、不带任何用户内容、不上报任何数据，仓库里没有用户守则或其所在机器的路径。
+- 不修改 Harness 的 app 文件，也不修改任何项目文件（`AGENTS.md` 由 Harness 自己注入，插件不读）。
 - 注入内容按原样进入系统提示词，不做 `{{变量}}` 插值。
 - HTTP 路由与 Harness 其他插件一致，校验 `connection.requestRejection`，未授权请求一律拒绝。
-- 单条守则上限 100 K 字符，导入单文件上限 20 K 字符（超出截断并在文本中注明）。
+- 单条守则上限 100 K 字符。
 
 ## 开发
 
