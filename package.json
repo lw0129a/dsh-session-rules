@@ -1,7 +1,7 @@
 {
   "name": "dsh-session-rules",
-  "version": "0.7.8",
-  "description": "Workspace- and session-scoped rules for DeepSeek Harness. Impacts: injects a system-prompt section when enabled, reads/writes the plugin store under $DSH_HOME/plugin-data, reads DSH workspace and session directories, serves one local HTTP route, calls the model already configured in the app, and adds one item to the sidebar workspace menu. edit this conversation's constraints and coding conventions in a popup, import existing project guidelines read-only, and save rules extracted from the conversation. The saved text is injected into that session's system prompt on the next model call.",
+  "version": "0.7.9",
+  "description": "Workspace- and session-scoped rules for DeepSeek Harness · 按工作区/会话分层维护守则，会话里逐层勾选带入，默认关闭",
   "type": "module",
   "license": "MIT",
   "keywords": [
@@ -20,7 +20,8 @@
     "dist",
     "cordis.patch.yml",
     "icon.svg",
-    "README.md"
+    "README.md",
+    "assets"
   ],
   "engines": {
     "node": ">=20"
@@ -43,8 +44,8 @@
     "typescript": "^7.0.2"
   },
   "meta": {
-    "title": "Session Rules",
-    "description": "会话守则：按工作区层级维护守则，在会话里逐层勾选带入，支持导入项目现有规范（只读）。注意：勾了「对本会话生效」后，这些文字会跟着系统提示词在每一轮请求里发送，所以每一轮都会多消耗 token，勾的层级越多消耗越大；不勾则只留在本地、不发送。层级按工作区路径推算，和侧边栏「视图选项 → 分组方式 → 按工作区树」对齐（该选项由你自己设置，插件不替你改）。影响范围：注入系统提示词、读写插件数据文件、只读 DSH 工作区与会话目录、注册本地 HTTP 路由、用 App 已配置的模型整理草稿、在侧边栏菜单里加一项。"
+    "title": "会话守则 · Session Rules",
+    "description": "按工作区层级维护守则；会话里逐层勾选要带入的内容，默认关闭，勾选后才进入系统提示词。写入文件：$DSH_HOME/plugin-data/dsh-session-rules/rules.json。\n\nWorkspace- and session-scoped rules for DeepSeek Harness. Each workspace keeps one rules block and child workspaces can only tick which ancestors they inherit. A session ticks any subset plus its own block; nothing is injected until ticked. Data lives in $DSH_HOME/plugin-data/dsh-session-rules/rules.json.\n\n注意：勾选后这些文字每轮都会随系统提示词发送，会有额外 token 消耗，勾得越多消耗越大。\nNote: ticked rules are sent with every request, so they add token cost every turn."
   },
   "repository": {
     "type": "git",
