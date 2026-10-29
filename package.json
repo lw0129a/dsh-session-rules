@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-rules",
-  "version": "0.7.7",
+  "version": "0.7.8",
   "description": "Workspace- and session-scoped rules for DeepSeek Harness. Impacts: injects a system-prompt section when enabled, reads/writes the plugin store under $DSH_HOME/plugin-data, reads DSH workspace and session directories, serves one local HTTP route, calls the model already configured in the app, and adds one item to the sidebar workspace menu. edit this conversation's constraints and coding conventions in a popup, import existing project guidelines read-only, and save rules extracted from the conversation. The saved text is injected into that session's system prompt on the next model call.",
   "type": "module",
   "license": "MIT",

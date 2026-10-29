@@ -463,6 +463,17 @@
       }
     }
 
+    // React tracks the value it last rendered. Writing textarea.value directly
+    // leaves that tracker stale, so the dispatched input event is dropped and
+    // the edit is reverted on the next render — go through the native setter.
+    function setValue(element, value) {
+      const view = element.ownerDocument?.defaultView
+      const prototype = view === null || view === undefined ? null : view.HTMLTextAreaElement.prototype
+      const setter = prototype === null ? null : Object.getOwnPropertyDescriptor(prototype, 'value')?.set
+      if (typeof setter === 'function') setter.call(element, value)
+      else element.value = value
+    }
+
     function editLine(target, edit) {
       const raw = target.value
       const start = raw.lastIndexOf('\n', (target.selectionStart ?? 0) - 1) + 1
@@ -472,7 +483,7 @@
       const next = edit(line)
       if (next === line) return
       const caret = start + Math.max(0, (target.selectionStart ?? 0) - start + (next.length - line.length))
-      target.value = `${raw.slice(0, start)}${next}${raw.slice(end)}`
+      setValue(target, `${raw.slice(0, start)}${next}${raw.slice(end)}`)
       target.setSelectionRange(caret, caret)
     }
 
@@ -496,7 +507,7 @@
         if (line.trim() === '') return
         event.preventDefault()
         const insert = `${MARKERS_BY_DEPTH[0]}`
-        target.value = `${raw.slice(0, caret)}\n${insert}${raw.slice(caret)}`
+        setValue(target, `${raw.slice(0, caret)}\n${insert}${raw.slice(caret)}`)
         target.setSelectionRange(caret + 1 + insert.length, caret + 1 + insert.length)
         target.dispatchEvent(new Event('input', { bubbles: true }))
         return
@@ -504,11 +515,11 @@
       event.preventDefault()
       if (match[4].trim() === '') {
         // Empty item: drop the marker and stay on this line.
-        target.value = `${raw.slice(0, start)}\n${raw.slice(caret)}`
+        setValue(target, `${raw.slice(0, start)}\n${raw.slice(caret)}`)
         target.setSelectionRange(start + 1, start + 1)
       } else {
         const insert = `${nextMarker(match[2])}${match[3]}`
-        target.value = `${raw.slice(0, caret)}\n${match[1]}${insert}${raw.slice(caret)}`
+        setValue(target, `${raw.slice(0, caret)}\n${match[1]}${insert}${raw.slice(caret)}`)
         target.setSelectionRange(caret + 1 + match[1].length + insert.length, caret + 1 + match[1].length + insert.length)
       }
       target.dispatchEvent(new Event('input', { bubbles: true }))
