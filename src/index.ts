@@ -82,20 +82,37 @@ function idCandidates(sessionId) {
   return [...new Set([sessionId, bare, `session-${bare}`])]
 }
 
+// Reserved store key for the rules that apply to every session.
+const GLOBAL_KEY = '*'
+
+function isTargetId(value) {
+  return value === GLOBAL_KEY || isSessionId(value)
+}
+
 // Evaluated at every prompt assembly: a broken store must never take prompt
 // assembly down, so failures fall back to "no rules".
+// The global rules come first, then the session's own; both are injected.
 function rulesFor(sessionId) {
   if (!isSessionId(sessionId)) return ''
   try {
     const store = readStore()
-    for (const key of idCandidates(sessionId)) {
-      const { rules, enabled } = entryOf(store, key)
-      if (enabled && rules.trim() !== '') return rules
-    }
-    return ''
+    const parts = [rulesOfKey(store, GLOBAL_KEY), rulesOfKey(store, sessionId)].filter((part) => part !== '')
+    return parts.join('\n\n')
   } catch {
     return ''
   }
+}
+
+function rulesOfKey(store, sessionId) {
+  for (const key of idCandidates(sessionId)) {
+    const { rules, enabled } = entryOf(store, key)
+    if (enabled && rules.trim() !== '') return rules.trim()
+  }
+  return ''
+}
+
+function storeKey(store, sessionId) {
+  return sessionId === GLOBAL_KEY ? GLOBAL_KEY : keyFor(store, sessionId)
 }
 
 function keyFor(store, sessionId) {
@@ -284,14 +301,14 @@ async function handleRequest(ctx, req, res) {
 
   if (req.method === 'GET') {
     const sessionId = url.searchParams.get('sessionId') ?? ''
-    if (!isSessionId(sessionId)) {
+    if (!isTargetId(sessionId)) {
       sendJson(res, 400, { ok: false, error: 'sessionId is required' })
       return
     }
     const store = readStore()
-    const entry = entryOf(store, keyFor(store, sessionId))
+    const entry = entryOf(store, storeKey(store, sessionId))
     const body: any = { ok: true, sessionId, rules: entry.rules, sources: entry.sources, enabled: entry.enabled }
-    if (url.searchParams.get('candidates') === '1') body.files = projectFiles(sessionId)
+    if (url.searchParams.get('candidates') === '1' && isSessionId(sessionId)) body.files = projectFiles(sessionId)
     sendJson(res, 200, body)
     return
   }
@@ -329,7 +346,7 @@ async function handleRequest(ctx, req, res) {
   }
 
   const sessionId = typeof payload?.sessionId === 'string' ? payload.sessionId.trim() : ''
-  if (!isSessionId(sessionId)) {
+  if (!isTargetId(sessionId)) {
     sendJson(res, 400, { ok: false, error: 'sessionId is required' })
     return
   }
@@ -343,7 +360,7 @@ async function handleRequest(ctx, req, res) {
   const sources = rawSources.filter((item) => typeof item === 'string' && item.length <= 500).slice(0, 100)
 
   const store = readStore()
-  store[keyFor(store, sessionId)] = { rules, sources, enabled, updatedAt: new Date().toISOString() }
+  store[storeKey(store, sessionId)] = { rules, sources, enabled, updatedAt: new Date().toISOString() }
   try {
     writeStore(store)
   } catch (error) {

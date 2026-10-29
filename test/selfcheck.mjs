@@ -44,6 +44,20 @@ assert.equal(rulesFor('abc'), '')
 assert.equal(rulesFor('session-abc'), '')
 assert.equal(entryOf(JSON.parse(JSON.stringify({ abc: { rules: 'x' } })), 'abc').enabled, true)
 
+// Global rules (store key '*') apply to every session, before that session's own.
+writeFileSync(
+  path.join(storeDir, 'rules.json'),
+  JSON.stringify({ '*': { rules: '通用：中文回复', sources: [] }, abc: { rules: '本会话：先跑测试', sources: [] } }),
+)
+assert.equal(rulesFor('abc'), '通用：中文回复\n\n本会话：先跑测试')
+assert.equal(rulesFor('session-other'), '通用：中文回复')
+
+// Global rules respect the same on/off switch.
+writeFileSync(path.join(storeDir, 'rules.json'), JSON.stringify({ '*': { rules: '通用：中文回复', sources: [], enabled: false } }))
+assert.equal(rulesFor('abc'), '')
+writeFileSync(path.join(storeDir, 'rules.json'), JSON.stringify({ '*': { rules: '通用：中文回复', sources: [] } }))
+assert.equal(entryOf({ '*': { rules: 'x' } }, '*').rules, 'x')
+
 // No sessions directory => nothing to import, and no throw.
 assert.deepEqual(projectFiles('session-abc'), [])
 

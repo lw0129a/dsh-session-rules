@@ -57,6 +57,11 @@
       'dialog.loadFailed': '读取失败',
       'dialog.saveFailed': '保存失败',
       'dialog.empty': '（尚未设置，留空即不注入）',
+      'dialog.scope': '作用范围：',
+      'dialog.scopeSession': '本会话',
+      'dialog.scopeGlobal': '所有会话',
+      'dialog.globalHint': '这条守则会加入每个会话的系统提示词；与本会话自己的守则会同时生效。',
+      'dialog.enabledGlobal': '对所有会话生效',
       'dialog.enabled': '对本会话生效',
       'dialog.disabledHint': '已关闭：守则内容保留，但不会加入本会话的系统提示词。',
     }
@@ -94,6 +99,11 @@
       'dialog.loadFailed': 'Could not load',
       'dialog.saveFailed': 'Could not save',
       'dialog.empty': '(empty — nothing is injected)',
+      'dialog.scope': 'Applies to: ',
+      'dialog.scopeSession': 'this session',
+      'dialog.scopeGlobal': 'all sessions',
+      'dialog.globalHint': 'These rules are added to every conversation’s system prompt, together with that session’s own rules.',
+      'dialog.enabledGlobal': 'Apply to all sessions',
       'dialog.enabled': 'Apply to this session',
       'dialog.disabledHint': 'Off — the rules are kept but not added to this session’s system prompt.',
     }
@@ -242,6 +252,9 @@
       const seat = props.seat
       const sessionId = props.sessionId
       const t = (key) => resolveText(seat, key)
+      const [scope, setScope] = React.useState('session')
+      // '*' is the host's reserved store key for rules shared by all sessions.
+      const targetId = scope === 'global' ? '*' : sessionId
       const [rules, setRules] = React.useState('')
       const [sources, setSources] = React.useState([])
       const [enabled, setEnabled] = React.useState(true)
@@ -256,7 +269,12 @@
 
       React.useEffect(() => {
         let cancelled = false
-        fetch(`${ENDPOINT}?sessionId=${encodeURIComponent(sessionId)}`, { credentials: 'same-origin' })
+        setLoading(true)
+        setError(null)
+        setNote(null)
+        setRules('')
+        setSources([])
+        fetch(`${ENDPOINT}?sessionId=${encodeURIComponent(targetId)}`, { credentials: 'same-origin' })
           .then((res) => res.json())
           .then((body) => {
             if (cancelled) return
@@ -274,7 +292,7 @@
         return () => {
           cancelled = true
         }
-      }, [sessionId])
+      }, [targetId])
 
       async function optimize() {
         if (rules.trim() === '') {
@@ -312,7 +330,7 @@
             method: 'POST',
             credentials: 'same-origin',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ sessionId, rules, sources, enabled }),
+            body: JSON.stringify({ sessionId: targetId, rules, sources, enabled }),
           })
           const body = await res.json()
           if (!body || body.ok !== true) throw new Error(body?.error ?? `HTTP ${res.status}`)
@@ -411,7 +429,29 @@
         reviewChildren.push(panel('candidate', t('dialog.candidate'), review.candidate, true))
       }
 
+      const scopeRow = h(
+        'div',
+        { key: 'scope', style: { display: 'flex', alignItems: 'center', gap: 12, margin: '0 0 10px', fontSize: 13 } },
+        h('span', { style: { ...bodyStyle, margin: 0 } }, t('dialog.scope')),
+        ...[['session', 'dialog.scopeSession'], ['global', 'dialog.scopeGlobal']].map(([id, label]) =>
+          h(
+            'label',
+            { key: id, style: { display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' } },
+            h('input', {
+              type: 'radio',
+              name: 'session-rules-scope',
+              checked: scope === id,
+              onChange: () => setScope(id),
+              style: { accentColor: 'var(--dsw-alias-brand-primary, #0969da)', cursor: 'pointer' },
+            }),
+            h('span', null, t(label)),
+          ),
+        ),
+      )
+
       const children = review !== null ? reviewChildren : [
+        scopeRow,
+        scope === 'global' ? h('p', { key: 'globalHint', style: { ...bodyStyle, margin: '0 0 10px' } }, t('dialog.globalHint')) : null,
         h(
           'label',
           {
@@ -433,7 +473,7 @@
             onChange: (event) => setEnabled(event.target.checked),
             style: { width: 14, height: 14, accentColor: 'var(--dsw-alias-brand-primary, #0969da)', cursor: 'pointer' },
           }),
-          h('span', null, t('dialog.enabled')),
+          h('span', null, scope === 'global' ? t('dialog.enabledGlobal') : t('dialog.enabled')),
         ),
         h('textarea', {
           key: 'editor',
@@ -444,7 +484,7 @@
           onChange: (event) => setRules(withBulletCaret(event.target)),
           style: textareaStyle,
         }),
-      ]
+      ].filter((item) => item !== null)
       if (sources.length > 0) {
         children.push(
           h('p', { key: 'sources', style: { ...bodyStyle, margin: '8px 0 0' } }, `${t('dialog.sources')}${sources.join('、')}`),
